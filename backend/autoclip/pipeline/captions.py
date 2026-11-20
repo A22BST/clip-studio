@@ -13,6 +13,8 @@ it's why event counts look high relative to word counts.
 from __future__ import annotations
 
 import logging
+import math
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -239,6 +241,66 @@ def group_words(
 # --------------------------------------------------------------------------
 
 STYLE_NAME = "AutoClip"
+HOOK_STYLE_NAME = "Hook"
+DISCLOSURE_STYLE_NAME = "Disclosure"
+
+
+def build_hook_event(
+    text: str, width: int, height: int, duration_s: float = 2.0
+) -> tuple[pysubs2.SSAEvent, pysubs2.SSAStyle]:
+    """Fit a hook into two safe-area lines without allowing ASS tag injection."""
+    if width <= 0 or height <= 0 or not math.isfinite(duration_s) or duration_s <= 0:
+        raise ValueError("Hook dimensions and duration must be positive and finite")
+    clean = " ".join(text.replace("\\", " ").replace("{", "").replace("}", "").split())
+    lines = textwrap.wrap(clean, width=28, max_lines=2, placeholder="...") or [""]
+    style = pysubs2.SSAStyle()
+    style.fontname = "Anton"
+    # A conservative glyph-width bound also accommodates wide uppercase letters.
+    style.fontsize = min(height * 0.045, width * 0.8 / (max(map(len, lines)) * 1.2 or 1))
+    style.bold = True
+    style.alignment = pysubs2.Alignment.TOP_CENTER
+    style.marginl = style.marginr = round(width * 0.1)
+    style.marginv = round(height * 0.08)
+    style.outline = max(1, height / REFERENCE_HEIGHT * 4)
+    fade_ms = min(150, round(duration_s * 1000 / 3))
+    event = pysubs2.SSAEvent(
+        start=0,
+        end=pysubs2.make_time(s=duration_s),
+        style=HOOK_STYLE_NAME,
+        layer=1,
+        text=f"{{\\fad({fade_ms},{fade_ms})\\q2}}" + r"\N".join(lines),
+    )
+    return event, style
+
+
+def build_disclosure_event(
+    text: str, width: int, height: int, duration_s: float = 3.0
+) -> tuple[pysubs2.SSAEvent, pysubs2.SSAStyle]:
+    """A clear paid-partnership label ("#ad") at the start of the clip.
+
+    Content Rewards-style campaigns require a visible disclosure at the start. It sits
+    under the hook (top centre, second row), is opaque enough to read on any footage and
+    is escaped like the hook so campaign text cannot inject ASS tags.
+    """
+    if width <= 0 or height <= 0 or not math.isfinite(duration_s) or duration_s <= 0:
+        raise ValueError("Disclosure dimensions and duration must be positive and finite")
+    clean = " ".join(text.replace("\\", " ").replace("{", "").replace("}", "").split())
+    style = pysubs2.SSAStyle()
+    style.fontname = "Anton"
+    style.fontsize = min(height * 0.028, width * 0.9 / (max(len(clean), 1) * 1.1))
+    style.bold = True
+    style.alignment = pysubs2.Alignment.TOP_CENTER
+    style.marginl = style.marginr = round(width * 0.05)
+    style.marginv = round(height * 0.17)
+    style.outline = max(1, height / REFERENCE_HEIGHT * 3)
+    event = pysubs2.SSAEvent(
+        start=0,
+        end=pysubs2.make_time(s=duration_s),
+        style=DISCLOSURE_STYLE_NAME,
+        layer=1,
+        text="{\fad(120,120)}" + clean,
+    )
+    return event, style
 
 
 def build_ass(
@@ -248,6 +310,11 @@ def build_ass(
     width: int,
     height: int,
     time_offset_s: float = 0.0,
+    hook_text: str = "",
+    hook_duration_s: float = 2.0,
+    center_y_frac: float | None = None,
+    disclosure_text: str = "",
+    disclosure_duration_s: float = 3.0,
 ) -> pysubs2.SSAFile:
     """Build an ASS subtitle file for a clip.
 
@@ -265,6 +332,10 @@ def build_ass(
 
     scale = height / REFERENCE_HEIGHT
     subs.styles[STYLE_NAME] = _build_ass_style(style, height=height, scale=scale)
+    if center_y_frac is not None:
+        if not math.isfinite(center_y_frac) or not 0 <= center_y_frac <= 1:
+            raise ValueError("center_y_frac must be between 0 and 1")
+        subs.styles[STYLE_NAME].alignment = pysubs2.Alignment.MIDDLE_CENTER
 
     groups = group_words(words, max_words=style.max_words)
 
@@ -276,6 +347,20 @@ def build_ass(
         else:
             subs.events.append(_static_event(group, style, time_offset_s))
 
+    if center_y_frac is not None:
+        position = f"{{\\an5\\pos({width / 2:g},{height * center_y_frac:g})}}"
+        for event in subs.events:
+            event.text = position + event.text
+    if hook_text.strip():
+        event, hook_style = build_hook_event(hook_text, width, height, hook_duration_s)
+        subs.styles[HOOK_STYLE_NAME] = hook_style
+        subs.events.append(event)
+    if disclosure_text.strip():
+        d_event, d_style = build_disclosure_event(
+            disclosure_text, width, height, disclosure_duration_s
+        )
+        subs.styles[DISCLOSURE_STYLE_NAME] = d_style
+        subs.events.append(d_event)
     return subs
 
 
@@ -375,9 +460,25 @@ def write_ass(
     width: int,
     height: int,
     time_offset_s: float = 0.0,
+    hook_text: str = "",
+    hook_duration_s: float = 2.0,
+    center_y_frac: float | None = None,
+    disclosure_text: str = "",
+    disclosure_duration_s: float = 3.0,
 ) -> Path:
     """Render captions to an .ass file and return its path."""
-    subs = build_ass(words, style, width=width, height=height, time_offset_s=time_offset_s)
+    subs = build_ass(
+        words,
+        style,
+        width=width,
+        height=height,
+        time_offset_s=time_offset_s,
+        hook_text=hook_text,
+        hook_duration_s=hook_duration_s,
+        center_y_frac=center_y_frac,
+        disclosure_text=disclosure_text,
+        disclosure_duration_s=disclosure_duration_s,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     subs.save(str(path), encoding="utf-8")
     return path

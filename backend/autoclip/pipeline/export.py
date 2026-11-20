@@ -19,6 +19,7 @@ from ..system import report
 from . import captions as captions_module
 from . import ffmpeg
 from .captions import CaptionStyle
+from .layouts import Layout, LayoutPlan, build_layout_filtergraph
 from .reframe.croppath import CropPath, segment_crop_filter
 from .transcript import Word
 
@@ -56,6 +57,17 @@ class ExportRequest:
     style: CaptionStyle
     ratio: str = "9:16"
     burn_captions: bool = True
+    layout_plan: LayoutPlan | None = None
+    #: Hook headline shown for the first ``hook_duration_s`` seconds (empty = none).
+    hook_text: str = ""
+    hook_duration_s: float = 2.0
+    #: Paid-partnership label shown at the start (empty = none).
+    disclosure_text: str = ""
+    disclosure_duration_s: float = 3.0
+    #: Image composited over the whole clip (streamer logo/watermark required by a campaign).
+    overlay_path: Path | None = None
+    #: ffmpeg -af fragment applied before loudness normalisation (e.g. profanity bleeps).
+    extra_audio_filter: str = ""
 
     @property
     def duration_s(self) -> float:
@@ -92,6 +104,22 @@ def build_video_filtergraph(
 ) -> str:
     """Build the ``-filter_complex`` video chain for one clip."""
     out_w, out_h = ratio_dimensions(request.ratio)
+    plan = request.layout_plan
+    if plan is not None and plan.layout != Layout.TRACK and plan.cam is not None:
+        if request.ratio != "9:16":
+            raise ExportError("Camera layouts require the 9:16 output ratio.")
+        info = ffmpeg.probe(request.source)
+        if not info.width or not info.height:
+            raise ExportError("Camera layouts require a source video with known dimensions.")
+        try:
+            graph = build_layout_filtergraph(
+                plan, src_w=info.width, src_h=info.height, out_w=out_w, out_h=out_h
+            )
+        except ValueError as exc:
+            raise ExportError(f"Invalid camera layout: {exc}") from exc
+        if request.burn_captions and subtitle_name is not None:
+            return graph + f";[vlay]ass=filename={subtitle_name}:fontsdir={fonts_name}[vout]"
+        return graph + ";[vlay]null[vout]"
     segments = request.crop_path.segments
     if not segments:
         raise ExportError("The crop path has no segments.")
@@ -175,6 +203,29 @@ def _zoom_filter(zoom: float, out_w: int, out_h: int) -> str:
     return f"zoompan=z='min(zoom+{zoom / 240:.6f},{end_zoom:.4f})':d=1:s={out_w}x{out_h}:fps=30"
 
 
+def _add_overlay(filtergraph: str, out_w: int, out_h: int) -> str:
+    """Composite the campaign logo (input 1) over the finished video for the whole clip.
+
+    Placed top-left inside the platform safe area, ~20% of the output width. ``shortest``
+    ends the looped still image with the clip so the render terminates.
+    """
+    if not filtergraph.endswith("[vout]"):
+        raise ExportError("Cannot add an overlay: unexpected filtergraph shape.")
+    base = filtergraph[: -len("[vout]")] + "[vbase]"
+    logo_w = (out_w // 5) // 2 * 2
+    margin_x = out_w // 25
+    margin_y = out_h // 14
+    return (
+        f"{base};[1:v]scale={logo_w}:-1,format=rgba[ovl];"
+        f"[vbase][ovl]overlay=x={margin_x}:y={margin_y}:shortest=1,format=yuv420p[vout]"
+    )
+
+
+def _audio_chain(request: ExportRequest, settings: ExportSettings) -> str:
+    chain = build_audio_filtergraph(settings)
+    return f"{request.extra_audio_filter},{chain}" if request.extra_audio_filter else chain
+
+
 def build_audio_filtergraph(settings: ExportSettings) -> str:
     return f"loudnorm=I={settings.loudness_lufs}:TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
 
@@ -244,7 +295,7 @@ def export_clip(
     fonts_name = "fonts"
     render_cwd: Path | None = None
 
-    if request.burn_captions and request.words:
+    if request.burn_captions and (request.words or request.hook_text or request.disclosure_text):
         ass_path = captions_module.write_ass(
             workspace / "captions.ass",
             request.words,
@@ -252,7 +303,24 @@ def export_clip(
             width=out_w,
             height=out_h,
             time_offset_s=request.start_s,
+            hook_text=request.hook_text,
+            hook_duration_s=request.hook_duration_s,
+            disclosure_text=request.disclosure_text,
+            disclosure_duration_s=request.disclosure_duration_s,
         )
+        plan = request.layout_plan
+        if plan is not None and plan.layout != Layout.TRACK and plan.cam is not None:
+            # Position overrides preserve caption animations while centring each
+            # line exactly on the seam, independent of font size and line count.
+            import pysubs2
+
+            subs = pysubs2.load(str(ass_path), encoding="utf-8")
+            seam = round(out_h * plan.seam_y_frac / 2) * 2
+            for event in subs.events:
+                if event.style != captions_module.STYLE_NAME:
+                    continue  # hook / disclosure overlays keep their own position
+                event.text = rf"{{\an5\pos({out_w // 2},{seam})}}" + event.text
+            subs.save(str(ass_path), encoding="utf-8")
         render_cwd, subtitle_name, fonts_name = ffmpeg.relative_filter_workspace(
             ass_path, captions_module.FONT_DIR
         )
@@ -260,6 +328,11 @@ def export_clip(
     filtergraph = build_video_filtergraph(
         request, subtitle_name=subtitle_name, fonts_name=fonts_name
     )
+
+    input_args: list[str] = ["-i", str(request.source)]
+    if request.overlay_path is not None:
+        filtergraph = _add_overlay(filtergraph, out_w, out_h)
+        input_args += ["-loop", "1", "-framerate", "30", "-i", str(request.overlay_path)]
 
     request.destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -272,8 +345,7 @@ def export_clip(
         f"{request.start_s:.4f}",
         "-t",
         f"{request.duration_s:.4f}",
-        "-i",
-        str(request.source),
+        *input_args,
         "-filter_complex",
         filtergraph,
         "-map",
@@ -281,7 +353,7 @@ def export_clip(
         "-map",
         "0:a?",
         "-af",
-        build_audio_filtergraph(settings),
+        _audio_chain(request, settings),
         *encoder_args(settings),
         "-pix_fmt",
         "yuv420p",

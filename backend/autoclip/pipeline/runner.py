@@ -24,7 +24,7 @@ from ..config import load as load_settings
 from ..db import store
 from ..db.models import Clip, Export, Job, Source, new_id, utcnow
 from ..db.models import Transcript as TranscriptRow
-from ..providers import build_provider, detection_config
+from ..providers import ClipCandidate, build_provider, detection_config
 from . import Stage, captions, export, ffmpeg, highlights, prepare, transcribe
 from .prepare import Silence
 from .reframe import ReframeConfig, build_crop_path
@@ -112,7 +112,11 @@ class PipelineRunner:
         settings: Settings | None = None,
         on_progress: ProgressHandler | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        candidates: list[ClipCandidate] | None = None,
     ) -> None:
+        #: Pre-chosen clips (e.g. picked by Claude in a session). When given, the
+        #: highlights stage skips the LLM provider and only refines the boundaries.
+        self.candidates = candidates
         self.job = job
         self.source = source
         self.settings = settings or load_settings()
@@ -280,9 +284,22 @@ class PipelineRunner:
             self._finish_stage(stage)
             return existing
 
+        config = detection_config(self.settings)
+        if self.candidates is not None:
+            self._emit(stage, 0.0, "Using the supplied clip selection")
+            clips = highlights.build_clips(
+                transcript,
+                self.candidates,
+                config,
+                job_id=self.job.id,
+                silences=silences,
+            )
+            store.replace_clips(self.job.id, clips)
+            self._finish_stage(stage)
+            return clips
+
         provider_name = self.job.provider or self.settings.active_provider
         provider = build_provider(provider_name, self.settings)
-        config = detection_config(self.settings)
 
         self._emit(stage, 0.0, f"Finding highlights with {provider.name}")
         clips = await highlights.detect(

@@ -1,0 +1,30 @@
+# KreekCraft GTA 6 Clipping (Content Rewards). Summary of the public rules as relayed on
+# 2026-11-20; the campaign page is the source of truth. Min/max length, spoiler and
+# paid-disclosure wording are NOT on the page, so those values are conservative defaults.
+name: KreekCraft GTA 6 Clipping
+type: cpm
+platforms: [tiktok, instagram, youtube]
+rate_per_1k_usd: 1.0
+min_duration_s: 15
+max_duration_s: 60
+required_hashtags: [GTA6, KreekCraft, GrandTheftAutoVI]
+required_caption_phrases: ["Watch KreekCraft on YouTube and Twitch"]
+# Logo must be visible for the ENTIRE clip. Put the official asset (from the campaign's
+# reference materials) at campaigns/assets/kreekcraft-logo.png. Until it exists every
+# clip is BLOCKED by the rules check - that is intentional.
+required_overlay: kreekcraft-logo.png
+disclosure_required: true
+disclosure_text: "#ad  Paid partnership"
+disclosure_duration_s: 3
+no_ai_visuals: false
+today_only: false
+spoiler_policy: light
+swear_filter: bleep
+submit_deadline_min: 30
+audience_geo: ">=40% audience from US/UK/CA/AU"
+min_engagement_pct: 0.8
+max_similar_posts: 5
+banned_topics: [leaked footage]
+notes: >
+  Only KreekCraft's official GTA 6 streams/replays. Original edits only. Hook in the first
+  1-2 s. Clips must stay public 30 days. Engagement >= 0.8% with likes public.

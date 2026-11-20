@@ -1,0 +1,15 @@
+name: Example GTA streamer
+platforms: [tiktok, youtube, instagram]
+min_duration_s: 15
+max_duration_s: 90
+required_hashtags: [GTA6, ExampleCreator]
+required_mentions: [ExampleCreator]
+banned_words: []
+banned_topics: [leaked footage]
+max_title_chars: 100
+today_only: true
+max_age_hours: 24
+spoiler_policy: light
+swear_filter: bleep
+rate_per_1k_usd: 0.0
+notes: Example only. Obtain creator permission and replace these rules before use.
