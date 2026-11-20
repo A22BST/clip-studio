@@ -82,6 +82,41 @@ def _model_load_error(exc: Exception, device: str, compute_type: str) -> Transcr
     return TranscriptionError(f"Could not load the Whisper model: {message}")
 
 
+#: Audio longer than this is transcribed in chunks of CHUNK_S seconds (see transcribe()).
+CHUNK_THRESHOLD_S = 40 * 60
+CHUNK_S = 20 * 60
+
+
+def _audio_chunks(audio: Path):
+    """Yield ``(offset_s, audio_input)``: the file itself, or float32 chunks of a long WAV.
+
+    Chunking needs 16-bit PCM WAV (what ``prepare.extract_audio`` writes). Anything else,
+    and anything short, goes to Whisper unchunked.
+    """
+    import wave
+
+    import numpy as np
+
+    try:
+        with wave.open(str(audio), "rb") as wav:
+            rate, width, channels, frames = (
+                wav.getframerate(),
+                wav.getsampwidth(),
+                wav.getnchannels(),
+                wav.getnframes(),
+            )
+            if width != 2 or channels != 1 or rate != 16000 or frames / rate <= CHUNK_THRESHOLD_S:
+                yield 0.0, str(audio)
+                return
+            step = CHUNK_S * rate
+            for first in range(0, frames, step):
+                wav.setpos(first)
+                raw = wav.readframes(min(step, frames - first))
+                yield first / rate, np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    except (wave.Error, EOFError):
+        yield 0.0, str(audio)
+
+
 def transcribe(
     audio: Path,
     settings: WhisperSettings | None = None,
@@ -124,49 +159,55 @@ def transcribe(
     except Exception as exc:
         raise _model_load_error(exc, device, compute_type) from exc
 
-    segments_iter, info = model.transcribe(
-        str(audio),
-        language=settings.language or None,
-        word_timestamps=True,
-        vad_filter=True,
-        # Trims long silences before decoding, which both speeds things up and
-        # stops Whisper hallucinating text into empty audio.
-        vad_parameters={"min_silence_duration_ms": 500},
-    )
+    total = duration_s or 0.0
+    transcript = Transcript(language=settings.language, model=settings.model, source="whisper")
+    language = settings.language or None
 
-    total = duration_s or getattr(info, "duration", 0.0) or 0.0
-    transcript = Transcript(
-        language=getattr(info, "language", "") or settings.language,
-        model=settings.model,
-        source="whisper",
-    )
-
-    for segment in segments_iter:
-        if cancelled is not None and cancelled():
-            raise TranscriptionError("Transcription cancelled.")
-
-        first_word = len(transcript.words)
-        for word in getattr(segment, "words", None) or []:
-            text = (word.word or "").strip()
-            if not text:
-                continue
-            transcript.words.append(Word(text=text, start=float(word.start), end=float(word.end)))
-
-        # A segment with no word timings still carries text worth keeping for
-        # display, but it can't contribute to word-indexed clip boundaries.
-        last_word = max(first_word, len(transcript.words) - 1)
-        transcript.segments.append(
-            Segment(
-                text=(segment.text or "").strip(),
-                start=float(segment.start),
-                end=float(segment.end),
-                first_word=first_word,
-                last_word=last_word,
-            )
+    # Long audio (a 3 h stream) is fed to Whisper in chunks: faster-whisper decodes and
+    # computes the spectrogram of the whole input at once, which needs several GB of RAM
+    # for hours of audio and raised MemoryError on a 16 GB laptop.
+    for offset, chunk in _audio_chunks(audio):
+        segments_iter, info = model.transcribe(
+            chunk,
+            language=language,
+            word_timestamps=True,
+            vad_filter=True,
+            # Trims long silences before decoding, which both speeds things up and
+            # stops Whisper hallucinating text into empty audio.
+            vad_parameters={"min_silence_duration_ms": 500},
         )
+        language = language or getattr(info, "language", None) or None
+        transcript.language = transcript.language or (language or "")
+        total = total or getattr(info, "duration", 0.0) or 0.0
 
-        if on_progress and total:
-            on_progress(min(1.0, float(segment.end) / total))
+        for segment in segments_iter:
+            if cancelled is not None and cancelled():
+                raise TranscriptionError("Transcription cancelled.")
+
+            first_word = len(transcript.words)
+            for word in getattr(segment, "words", None) or []:
+                text = (word.word or "").strip()
+                if not text:
+                    continue
+                transcript.words.append(
+                    Word(text=text, start=float(word.start) + offset, end=float(word.end) + offset)
+                )
+
+            # A segment with no word timings still carries text worth keeping for
+            # display, but it can't contribute to word-indexed clip boundaries.
+            last_word = max(first_word, len(transcript.words) - 1)
+            transcript.segments.append(
+                Segment(
+                    text=(segment.text or "").strip(),
+                    start=float(segment.start) + offset,
+                    end=float(segment.end) + offset,
+                    first_word=first_word,
+                    last_word=last_word,
+                )
+            )
+
+            if on_progress and total:
+                on_progress(min(1.0, (float(segment.end) + offset) / total))
 
     if not transcript.words:
         raise TranscriptionError(

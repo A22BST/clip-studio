@@ -34,8 +34,9 @@ Set `spoiler_level` per clip:
 - `none`: normal gameplay/talk/funny moment. Nothing changes.
 - `reaction-to-spoiler`: the clip is about the streamer's REACTION to a GTA 6 story moment (mission twist, death,
   reveal, ending). KEEP it. Set `layout: "reaction"` and, if the reveal shows on screen in a known second range,
-  add `blur_windows: [[start, end]]` in CLIP-RELATIVE seconds (0 = clip start; estimate from word timings:
-  word time minus clip start) covering only the reveal seconds. The `hook` and `title` MUST be spoiler-free:
+  add `blur_word_ranges: [[firstWordIndex, lastWordIndex]]`: the `[index]` numbers of the words spoken
+  while the reveal is on screen (word indexes, never seconds: the pipeline converts them to exact times,
+  so they stay right when the cut is refined). Cover only the reveal moment. The `hook` and `title` MUST be spoiler-free:
   "his reaction to THAT mission 😭", never the plot point. Do not name characters/events that are the spoiler.
 - `raw-cinematic`: the window is mostly cutscene/ending/leaked footage with little streamer reaction (the
   transcript is cutscene dialogue, the streamer is silent, chat is reacting to the footage itself). REJECT:
@@ -66,11 +67,13 @@ Write `%USERPROFILE%\.autoclip\work\<job>\highlights.json`:
   "start_word_index": 1204, "end_word_index": 1390,
   "title": "...", "hook": "...", "caption": "...", "hashtags": ["GTA6", "..."],
   "score": 87, "reason": "why this is the moment (one line)",
-  "spoiler_level": "none", "layout": "facecam", "blur_windows": []
+  "spoiler_level": "none", "layout": "facecam", "blur_word_ranges": [], "mentions": []
 }]}
 ```
 `score` is 0-100 (your confidence it performs). Sort best first. Validate: valid JSON, indexes inside the
-candidate's `first_word..last_word`, every `spoiler_level`/`layout` one of the allowed values.
+candidate's `first_word..last_word`, every `spoiler_level`/`layout` one of the allowed values. Read `limits` in candidates.json: required
+hashtags, mentions, `required_caption_phrases` (the caption MUST contain them), `max_title_chars`,
+`banned_words`.
 
 ## 6. Render and report
 Run `clip stream <same vod/args as before> --campaign <name>` again (the job is reused; transcribe is cached), or

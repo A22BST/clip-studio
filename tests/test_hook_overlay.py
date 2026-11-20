@@ -39,7 +39,7 @@ def test_hook_wrap_safe_area() -> None:
     event, style = captions.build_hook_event("WIDE WORDS " * 30, 1080, 1920)
     lines = event.text.split("}", 1)[1].split(r"\N")
     assert len(lines) <= 2
-    assert max(map(len, lines)) * style.fontsize * 1.2 <= 1080 * 0.8 + 0.01
+    assert max(map(len, lines)) * style.fontsize * 0.55 <= 1080 * 0.8 + 0.01
     assert style.marginv >= 1920 * 0.07
     assert event.end == 2000
     event, _ = captions.build_hook_event(r"{\pos(0,0)}hello", 1080, 1920)

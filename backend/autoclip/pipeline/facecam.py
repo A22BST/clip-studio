@@ -11,7 +11,7 @@ import numpy as np
 from ..models import ModelDownloadError
 from . import ffmpeg
 from .layouts import Rect
-from .reframe.faces import FaceDetectionUnavailable, FaceObservation, sample_faces
+from .reframe.faces import FaceDetectionUnavailable, FaceObservation
 
 log = logging.getLogger(__name__)
 
@@ -19,58 +19,93 @@ log = logging.getLogger(__name__)
 def _camera_rect(face: FaceObservation, width: int, height: int) -> Rect:
     """Include shoulders and a likely overlay border, not just facial landmarks."""
     w = min(width, math.ceil(face.width * 2.4))
-    h = min(height, math.ceil(face.height * 2.0))
+    h = min(height, math.ceil(face.height * 2.3))
     return Rect(
         max(0, min(width - w, round(face.cx - w / 2))),
-        max(0, min(height - h, round(face.cy - h * 0.43))),
+        max(0, min(height - h, round(face.cy - h * 0.55))),
         w,
         h,
     )
 
 
-def _sample_frames(source: Path, times: list[float]) -> list[np.ndarray]:
-    """Seek only the requested frames to bound decoding and memory costs."""
-    import cv2
+#: Corner crops (fraction of frame width, height) tried in order. Facecams are small and sit in
+#: a corner, and MediaPipe's face model shrinks its input to ~192 px: scanning the whole 720p
+#: frame turns a 120 px webcam face into ~18 px and finds nothing. Cropping the corners first
+#: keeps such faces detectable.
+_CORNER_SCALES = ((0.30, 0.40), (0.42, 0.52))
 
-    capture = cv2.VideoCapture(str(source))
-    frames = []
+
+def _corner_faces(source: Path, times: list[float], width: int, height: int):
+    """Detect faces inside the four frame corners; returns observations in full-frame pixels.
+
+    ``t`` is the offset from the first sample time so slots line up with ``detect_facecam``.
+    """
     try:
-        for timestamp in times:
-            capture.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-            ok, frame = capture.read()
-            if not ok:
-                return []
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        import cv2
+        import mediapipe as mp
+        from mediapipe.tasks.python import BaseOptions
+        from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, RunningMode
+    except ImportError as exc:
+        raise FaceDetectionUnavailable(f"MediaPipe or OpenCV is unavailable: {exc}") from exc
+    from .. import models
+    from .reframe.faces import _to_observation
+
+    options = FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(models.ensure("face_landmarker"))),
+        running_mode=RunningMode.IMAGE,
+        num_faces=1,
+        min_face_detection_confidence=0.4,
+    )
+    capture = cv2.VideoCapture(str(source))
+    observations: list[FaceObservation] = []
+    try:
+        with FaceLandmarker.create_from_options(options) as landmarker:
+            for timestamp in times:
+                capture.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+                ok, frame = capture.read()
+                if not ok:
+                    continue
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                for left in (True, False):
+                    for top in (True, False):
+                        for fw, fh in _CORNER_SCALES:
+                            cw, ch = round(width * fw), round(height * fh)
+                            x0 = 0 if left else width - cw
+                            y0 = 0 if top else height - ch
+                            crop = np.ascontiguousarray(rgb[y0 : y0 + ch, x0 : x0 + cw])
+                            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=crop)
+                            found = False
+                            for landmarks in landmarker.detect(image).face_landmarks or []:
+                                obs = _to_observation(landmarks, timestamp - times[0], cw, ch)
+                                if obs is not None:
+                                    obs.cx += x0
+                                    obs.cy += y0
+                                    obs.eye_y += y0
+                                    observations.append(obs)
+                                    found = True
+                            if found:
+                                break  # a tighter crop found it; skip the wider one
     finally:
         capture.release()
-    return frames
+    return observations
 
 
-def _static_border(frames: list[np.ndarray], rect: Rect) -> bool:
-    """Demand temporal evidence: static whole scenes cannot prove an overlay."""
-    if len(frames) < 3:
-        return False
-    height, width = frames[0].shape
-    border = np.zeros((height, width), dtype=bool)
-    x, y, w, h = rect.x, rect.y, rect.w, rect.h
-    thickness = max(2, round(min(w, h) * 0.05))
-    border[y : y + h, x : x + w] = True
-    border[y + thickness : y + h - thickness, x + thickness : x + w - thickness] = False
-    outside = np.ones_like(border)
-    outside[y : y + h, x : x + w] = False
-    if not border.any() or not outside.any():
-        return False
-    changes = [
-        np.abs(b.astype(np.float32) - a.astype(np.float32))
-        for a, b in zip(frames, frames[1:], strict=False)
-    ]
-    edge_change = float(np.mean([delta[border].mean() for delta in changes]))
-    scene_change = float(np.mean([delta[outside].mean() for delta in changes]))
-    return scene_change > 3 and edge_change < min(12, scene_change * 0.4)
+#: A webcam overlay is small. Bigger faces are the main subject (IRL stream, full-screen cam).
+MAX_FACE_WIDTH_FRAC = 0.22
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
 
 
 def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int = 8) -> Rect | None:
-    """Prefer TRACK when size, persistence or a static border cannot be proven."""
+    """Find a webcam overlay tucked in a frame corner, or None (the caller then uses TRACK).
+
+    Evidence required: a face that stays put (same spot and size) in more than half of the
+    samples, is small relative to the frame, and sits in a corner region. A face that moves,
+    is large, or is seen only now and then (an NPC walking past) is not a facecam.
+    """
     if samples < 3 or start_s < 0 or end_s <= start_s:
         return None
     try:
@@ -79,12 +114,10 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
             return None
         width, height = info.width, info.height
         step = (end_s - start_s) / samples
-        faces = sample_faces(source, start_s=start_s, end_s=end_s, sample_fps=1 / step)
-        # Match each seed across sample slots, allowing misses but never counting
-        # multiple faces in one frame as multiple pieces of persistence evidence.
+        times = [start_s + (i + 0.5) * step for i in range(samples)]
+        faces = _corner_faces(source, times, width, height)
         for seed in faces:
-            rect = _camera_rect(seed, width, height)
-            if rect.w * rect.h >= width * height * 0.45:
+            if seed.width > width * MAX_FACE_WIDTH_FRAC:
                 continue
             matches = [
                 face
@@ -94,23 +127,28 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
                 and 0.65 < face.width / seed.width < 1.5
                 and 0.65 < face.height / seed.height < 1.5
             ]
+            # Several faces in one frame must not count as several pieces of persistence.
             slots = {round(face.t / step) for face in matches if 0 <= face.t < end_s - start_s}
             if len(slots) <= samples / 2:
                 continue
-            # Union of accepted observations avoids clipping a slightly moving head.
-            left = min(face.left for face in matches)
-            right = max(face.right for face in matches)
-            top = min(face.top for face in matches)
-            bottom = max(face.bottom for face in matches)
-            union = FaceObservation(
-                0, (left + right) / 2, (top + bottom) / 2, right - left, bottom - top, 0, 0
+            # Median position/size (robust to a leaning head), then expand to shoulders + border.
+            typical = FaceObservation(
+                0,
+                _median([f.cx for f in matches]),
+                _median([f.cy for f in matches]),
+                _median([f.width for f in matches]),
+                _median([f.height for f in matches]),
+                0,
+                0,
             )
-            rect = _camera_rect(union, width, height)
+            in_corner_x = typical.cx < width * 0.45 or typical.cx > width * 0.55
+            in_corner_y = typical.cy < height * 0.45 or typical.cy > height * 0.55
+            if not (in_corner_x and in_corner_y):
+                continue
+            rect = _camera_rect(typical, width, height)
             if rect.w * rect.h >= width * height * 0.45:
                 continue
-            frames = _sample_frames(source, [start_s + i * step for i in range(samples)])
-            if _static_border(frames, rect):
-                return rect
+            return _snap_to_edges(rect, width, height)
     except (
         FaceDetectionUnavailable,
         ModelDownloadError,
@@ -122,3 +160,19 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
     ) as exc:
         log.warning("Facecam detection unavailable for %s: %s", source.name, exc)
     return None
+
+
+def _snap_to_edges(rect: Rect, width: int, height: int) -> Rect:
+    """Overlays sit flush against a frame edge; extend a nearly-flush rect to the edge so no
+    sliver of gameplay is included between the overlay and the border."""
+    margin_x, margin_y = round(width * 0.06), round(height * 0.08)
+    x, y, w, h = rect.x, rect.y, rect.w, rect.h
+    if x <= margin_x:
+        w, x = w + x, 0
+    elif x + w >= width - margin_x:
+        w = width - x
+    if y <= margin_y:
+        h, y = h + y, 0
+    elif y + h >= height - margin_y:
+        h = height - y
+    return Rect(x, y, w, h)

@@ -31,6 +31,9 @@ class ClipFacts:
     overlay_applied: bool = False
     #: True if any visual in the clip is AI-generated (we never do this; guard anyway).
     ai_visuals: bool = False
+    #: False when a reaction-to-spoiler clip could not get the REACTION layout (no camera
+    #: found), which would show the reveal unblurred in the full frame.
+    reaction_layout_ok: bool = True
 
 
 @dataclass
@@ -121,6 +124,12 @@ def check_clip(campaign: Campaign, facts: ClipFacts) -> RuleResult:
                     f"max {campaign.max_age_hours:g}h (age {age:.1f}h)",
                 )
 
+    if facts.spoiler_level == "reaction-to-spoiler" and not facts.reaction_layout_ok:
+        add(
+            "reaction_needs_layout",
+            "reaction-to-spoiler needs the REACTION layout (camera not found): "
+            "the reveal would show unblurred",
+        )
     if facts.spoiler_level == "raw-cinematic":
         add("raw_cinematic", "raw-cinematic footage is always prohibited")
     elif facts.spoiler_level == "reaction-to-spoiler" and campaign.spoiler_policy != "none":

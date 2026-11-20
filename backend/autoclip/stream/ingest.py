@@ -216,7 +216,9 @@ def ingest_local(
     if chat_json is not None:
         chat_raw = folder / "chat_raw.json"
         shutil.copy2(chat_json, chat_raw)
-    return _finish(folder, target, chat_raw, vod_id=vod_id, url=str(video), trim_start_s=trim_start_s)
+    return _finish(
+        folder, target, chat_raw, vod_id=vod_id, url=str(video), trim_start_s=trim_start_s
+    )
 
 
 def _finish(

@@ -337,6 +337,7 @@ def doctor() -> None:
 
 
 from .stream.cli import stream_cmd as _stream_cmd  # noqa: E402
+
 app.command("stream")(_stream_cmd)
 
 config_app = typer.Typer(help="Inspect and modify AutoClip settings.", no_args_is_help=True)

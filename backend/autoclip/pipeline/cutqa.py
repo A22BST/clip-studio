@@ -79,12 +79,18 @@ def compare_edge(expected: list[str], heard: list[str], edge: Edge) -> CutIssue 
     if next_want and _same(probe, next_want):
         side = "first" if edge == "start" else "last"
         return CutIssue(
-            edge, "error", f"the {side} word {want!r} is cut off (heard {probe!r} first)",
-            expected, heard,
+            edge,
+            "error",
+            f"the {side} word {want!r} is cut off (heard {probe!r} first)",
+            expected,
+            heard,
         )
     return CutIssue(
-        edge, "warning", f"heard {probe!r}, expected {want!r}: could not confirm the cut",
-        expected, heard,
+        edge,
+        "warning",
+        f"heard {probe!r}, expected {want!r}: could not confirm the cut",
+        expected,
+        heard,
     )
 
 

@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from autoclip.stream import ingest
 from autoclip.stream.chat import ChatLog, parse_twitchdownloader_json
 
@@ -15,7 +14,10 @@ RAW = {
             "commenter": {"display_name": "Bob", "name": "bob"},
             "message": {
                 "body": "KEKW no way",
-                "fragments": [{"text": "KEKW ", "emoticon": {"emoticonId": "1"}}, {"text": "no way"}],
+                "fragments": [
+                    {"text": "KEKW ", "emoticon": {"emoticonId": "1"}},
+                    {"text": "no way"},
+                ],
             },
         },
         {"content_offset_seconds": 3.0, "commenter": {"name": "amy"}, "message": {"body": "hi"}},

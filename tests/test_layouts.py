@@ -84,21 +84,17 @@ def observation(t: float, cx: float = 160, size: float = 100) -> FaceObservation
 @pytest.fixture
 def detector_mocks(monkeypatch: pytest.MonkeyPatch) -> Rect:
     monkeypatch.setattr(ffmpeg, "probe", lambda _: SimpleNamespace(width=1920, height=1080))
-    rect = Rect(40, 64, 240, 200)
-    rng = np.random.default_rng(42)
-    frames = [rng.integers(0, 256, (1080, 1920), dtype=np.uint8) for _ in range(8)]
-    for frame in frames:
-        frame[rect.y : rect.y + rect.h, rect.x : rect.x + rect.w] = 80
-    monkeypatch.setattr(facecam, "_sample_frames", lambda *_: frames)
-    return rect
+    # Expected camera rect for the stable face used below (median face -> expand -> snap).
+    return facecam._snap_to_edges(facecam._camera_rect(observation(0), 1920, 1080), 1920, 1080)
 
 
 def test_stable_small_face(monkeypatch: pytest.MonkeyPatch, detector_mocks: Rect) -> None:
-    def sample(_: Path, **kwargs: float) -> list[FaceObservation]:
-        assert kwargs == {"start_s": 12, "end_s": 20, "sample_fps": 1}
+    def sample(_: Path, times: list[float], width: int, height: int) -> list[FaceObservation]:
+        assert (len(times), width, height) == (8, 1920, 1080)
+        assert times[0] == pytest.approx(12.5) and times[-1] == pytest.approx(19.5)
         return [observation(i) for i in range(8)]
 
-    monkeypatch.setattr(facecam, "sample_faces", sample)
+    monkeypatch.setattr(facecam, "_corner_faces", sample)
     assert facecam.detect_facecam(Path("source.mp4"), 12, 20) == detector_mocks
 
 
@@ -113,7 +109,7 @@ def test_reject_uncertain_faces(
         "minority": [observation(i) for i in range(4)],
         "duplicates": [observation(0) for _ in range(8)],
     }[kind]
-    monkeypatch.setattr(facecam, "sample_faces", lambda *_, **__: faces)
+    monkeypatch.setattr(facecam, "_corner_faces", lambda *_, **__: faces)
     assert facecam.detect_facecam(Path("source.mp4"), 0, 8) is None
 
 
@@ -126,15 +122,21 @@ def test_detector_unavailable(
     def unavailable(*args: object, **kwargs: object) -> list[FaceObservation]:
         raise error
 
-    monkeypatch.setattr(facecam, "sample_faces", unavailable)
+    monkeypatch.setattr(facecam, "_corner_faces", unavailable)
     assert facecam.detect_facecam(Path("source.mp4"), 0, 8) is None
 
 
-def test_moving_border_and_static_scene_are_rejected(detector_mocks: Rect) -> None:
-    rng = np.random.default_rng(4)
-    frames = [rng.integers(0, 256, (1080, 1920), dtype=np.uint8) for _ in range(3)]
-    assert not facecam._static_border(frames, detector_mocks)
-    assert not facecam._static_border([frames[0]] * 3, detector_mocks)
+def test_face_in_the_middle_of_the_frame_is_not_a_facecam(
+    monkeypatch: pytest.MonkeyPatch, detector_mocks: Rect
+) -> None:
+    centre = [observation(i, cx=960) for i in range(8)]
+    monkeypatch.setattr(facecam, "_corner_faces", lambda *_, **__: centre)
+    assert facecam.detect_facecam(Path("source.mp4"), 0, 8) is None
+
+
+def test_snap_to_edges_extends_nearly_flush_overlays() -> None:
+    assert facecam._snap_to_edges(Rect(30, 40, 300, 250), 1280, 720) == Rect(0, 0, 330, 290)
+    assert facecam._snap_to_edges(Rect(500, 300, 300, 250), 1280, 720) == Rect(500, 300, 300, 250)
 
 
 @pytest.fixture(scope="module")

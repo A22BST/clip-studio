@@ -18,7 +18,8 @@ highlights.json (written by the /clip skill) looks like::
         "score": 85, "reason": "...",
         "spoiler_level": "none" | "reaction-to-spoiler" | "raw-cinematic",
         "layout": "track" | "facecam" | "reaction",
-        "blur_windows": [[2.0, 6.5]]        # clip-relative seconds, REACTION only
+        "blur_word_ranges": [[1250, 1262]],  # word-index ranges to blur (the reveal), REACTION
+        "mentions": []                       # @mentions the campaign requires in the post
     }]}
 """
 
@@ -62,7 +63,10 @@ class ClipMeta:
 
     spoiler_level: str = "none"
     layout: str = "track"
-    blur_windows: list[tuple[float, float]] = field(default_factory=list)
+    #: Inclusive word-index ranges whose on-screen time is blurred (the reveal). Word indexes,
+    #: not seconds: boundary refinement moves the clip start, so seconds would drift.
+    blur_word_ranges: list[tuple[int, int]] = field(default_factory=list)
+    mentions: list[str] = field(default_factory=list)
     caption: str = ""
     hashtags: list[str] = field(default_factory=list)
 
@@ -225,6 +229,13 @@ def prepare(
                     "max_duration_s": campaign.max_duration_s,
                     "required_hashtags": campaign.required_hashtags,
                     "required_mentions": campaign.required_mentions,
+                    "required_caption_phrases": campaign.required_caption_phrases,
+                    "max_title_chars": campaign.max_title_chars,
+                    "banned_words": campaign.banned_words,
+                    "banned_topics": campaign.banned_topics,
+                    "disclosure_required": campaign.disclosure_required,
+                    "required_overlay": bool(campaign.required_overlay),
+                    "swear_filter": campaign.swear_filter,
                     "spoiler_policy": campaign.spoiler_policy,
                     "today_only": campaign.today_only,
                 },
@@ -301,7 +312,10 @@ def load_highlights(path: Path) -> list[tuple[ClipCandidate, ClipMeta]]:
                 ClipMeta(
                     spoiler_level=spoiler,
                     layout=layout,
-                    blur_windows=[(float(a), float(b)) for a, b in item.get("blur_windows", [])],
+                    blur_word_ranges=[
+                        (int(a), int(b)) for a, b in item.get("blur_word_ranges", [])
+                    ],
+                    mentions=[str(m) for m in item.get("mentions", [])],
                     caption=str(item.get("caption", "")),
                     hashtags=[str(h) for h in item.get("hashtags", [])],
                 ),
@@ -401,7 +415,9 @@ def write_report(outcomes: list[ClipOutcome], destination: Path, *, campaign: st
         )
         lines.append(f"- source time: {o.start_s:.0f}s-{o.end_s:.0f}s  hook: {o.hook}")
         if o.caption:
-            lines.append(f"- caption: {o.caption}  tags: {' '.join('#' + h.lstrip('#') for h in o.hashtags)}")
+            lines.append(
+                f"- caption: {o.caption}  tags: {' '.join('#' + h.lstrip('#') for h in o.hashtags)}"
+            )
         for v in o.violations:
             lines.append(f"- BLOCKED: {v}")
         for n in o.notes:
@@ -463,21 +479,10 @@ def render(
                 notes.append(f"no facecam found: {layout.value} layout fell back to track")
                 layout = layouts.Layout.TRACK
             else:
-                blur = [layouts.BlurWindow(a, b) for a, b in meta.blur_windows]
+                blur = _blur_windows(meta.blur_word_ranges, transcript, clip, notes)
                 if meta.spoiler_level == "reaction-to-spoiler" and not blur:
                     notes.append("reaction-to-spoiler clip has no blur window (check the reveal)")
                 plan = layouts.default_plan(layout, cam, blur)
-        crop_path = None
-        if plan is None:
-            from ..pipeline.reframe import ReframeConfig, build_crop_path
-
-            crop_path = build_crop_path(
-                source_path,
-                start_s=clip.start_s,
-                end_s=clip.end_s,
-                transcript=transcript,
-                config=ReframeConfig(aspect_w=9, aspect_h=16),
-            )
 
         # -- rules -----------------------------------------------------------
         result = rules.check_clip(
@@ -487,11 +492,16 @@ def render(
                 title=clip.title,
                 caption=meta.caption,
                 hashtags=meta.hashtags,
+                mentions=meta.mentions,
                 hook=clip.hook,
                 transcript_text=" ".join(w.text for w in words),
                 spoiler_level=meta.spoiler_level,
                 source_stream_date=stream_date,
-                has_captions=True,
+                has_captions=bool(words),
+                reaction_layout_ok=not (
+                    meta.spoiler_level == "reaction-to-spoiler"
+                    and not (plan is not None and plan.layout == layouts.Layout.REACTION)
+                ),
                 has_hook=bool(clip.hook),
                 reframed=True,
                 disclosure_shown=bool(disclosure),
@@ -520,6 +530,18 @@ def render(
             store.update_clip(clip.id, status="discarded")
             continue
 
+        crop_path = None
+        if plan is None:
+            from ..pipeline.reframe import ReframeConfig, build_crop_path
+
+            crop_path = build_crop_path(
+                source_path,
+                start_s=clip.start_s,
+                end_s=clip.end_s,
+                transcript=transcript,
+                config=ReframeConfig(aspect_w=9, aspect_h=16),
+            )
+
         # -- swear filter ----------------------------------------------------
         audio_filter = ""
         render_words = words
@@ -527,9 +549,10 @@ def render(
             render_words = censor_words(words, campaign.swear_filter)
             if campaign.swear_filter == "bleep":
                 intervals = [
-                    (a - clip.start_s, b - clip.start_s) for a, b in profane_intervals(words)
+                    (max(0.0, a - clip.start_s), min(duration, b - clip.start_s))
+                    for a, b in profane_intervals(words)
                 ]
-                audio_filter = bleep_audio_filter(intervals)
+                audio_filter = bleep_audio_filter([iv for iv in intervals if iv[1] > iv[0]])
 
         destination = out_dir / export.output_filename(clip.title or f"clip-{clip.rank}", ratio)
         request = export.ExportRequest(
@@ -552,7 +575,7 @@ def render(
             export.export_clip(
                 request, work_dir=runner.workspace.captions_dir, settings=settings.export
             )
-        except export.ExportError as exc:
+        except Exception as exc:  # one bad clip must not abort the other clips' renders
             outcomes.append(
                 ClipOutcome(
                     rank=clip.rank,
@@ -572,8 +595,8 @@ def render(
         qa_score = result.qa_score
         edge_issues = cutqa.check_clip_edges(
             destination,
-            [w.text for w in words[:4]],
-            [w.text for w in words[-4:]],
+            [w.text for w in render_words if "*" not in w.text][:4],
+            [w.text for w in render_words if "*" not in w.text][-4:],
         )
         for issue in edge_issues:
             notes.append(f"cut-point {issue.severity} ({issue.edge}): {issue.message}")
@@ -614,9 +637,29 @@ def render(
     return outcomes
 
 
+def _blur_windows(ranges: list[tuple[int, int]], transcript, clip: Clip, notes: list[str]) -> list:
+    """Word-index ranges -> clip-relative BlurWindows, using measured word times."""
+    from ..pipeline import layouts
+
+    duration = clip.end_s - clip.start_s
+    windows = []
+    for first, last in ranges:
+        lo, hi = transcript.time_range(first, last)
+        start = max(0.0, lo - clip.start_s - 0.15)  # a beat early: the reveal precedes the words
+        end = min(duration, hi - clip.start_s + 0.15)
+        if end <= start:
+            notes.append(f"blur words {first}-{last} fall outside the clip; ignored")
+            continue
+        try:
+            windows.append(layouts.BlurWindow(start, end))
+        except ValueError as exc:
+            notes.append(f"blur words {first}-{last} rejected: {exc}")
+    return windows
+
+
 def _stream_date(stream: StreamSource):
     """The VOD's date when known (used by 'today's stream only' campaigns)."""
-    from datetime import UTC, datetime
+    from datetime import datetime
 
     meta = stream.folder / "chat_raw.json"
     try:
@@ -626,4 +669,4 @@ def _stream_date(stream: StreamSource):
             return datetime.fromisoformat(str(created).replace("Z", "+00:00"))
     except (OSError, ValueError):
         pass
-    return datetime.fromtimestamp(stream.video.stat().st_mtime, tz=UTC)
+    return None  # unknown: a file's mtime is the download time, never the stream date

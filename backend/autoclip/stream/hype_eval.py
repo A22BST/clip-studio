@@ -37,7 +37,11 @@ def app_token(client_id: str, client_secret: str, *, client: httpx.Client | None
     http = client or httpx.Client(timeout=30)
     r = http.post(
         TOKEN_URL,
-        data={"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"},
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+        },
     )
     if r.status_code != 200:
         raise TwitchApiError(f"Could not get a Twitch app token: {r.status_code} {r.text[:200]}")
@@ -51,9 +55,14 @@ def fetch_viewer_clips(
     client_id = client_id or os.environ.get("TWITCH_CLIENT_ID")
     client_secret = client_secret or os.environ.get("TWITCH_CLIENT_SECRET")
     if not client_id or not client_secret:
-        raise TwitchApiError("Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET (Twitch developer app).")
+        raise TwitchApiError(
+            "Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET (Twitch developer app)."
+        )
     with httpx.Client(timeout=30) as http:
-        headers = {"Client-Id": client_id, "Authorization": f"Bearer {app_token(client_id, client_secret, client=http)}"}
+        headers = {
+            "Client-Id": client_id,
+            "Authorization": f"Bearer {app_token(client_id, client_secret, client=http)}",
+        }
 
         def get(path: str, **params):
             r = http.get(f"{HELIX}/{path}", params=params, headers=headers)

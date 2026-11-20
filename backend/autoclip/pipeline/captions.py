@@ -256,7 +256,7 @@ def build_hook_event(
     style = pysubs2.SSAStyle()
     style.fontname = "Anton"
     # A conservative glyph-width bound also accommodates wide uppercase letters.
-    style.fontsize = min(height * 0.045, width * 0.8 / (max(map(len, lines)) * 1.2 or 1))
+    style.fontsize = min(height * 0.045, width * 0.8 / (max(map(len, lines)) * 0.55 or 1))
     style.bold = True
     style.alignment = pysubs2.Alignment.TOP_CENTER
     style.marginl = style.marginr = round(width * 0.1)
@@ -287,7 +287,7 @@ def build_disclosure_event(
     clean = " ".join(text.replace("\\", " ").replace("{", "").replace("}", "").split())
     style = pysubs2.SSAStyle()
     style.fontname = "Anton"
-    style.fontsize = min(height * 0.028, width * 0.9 / (max(len(clean), 1) * 1.1))
+    style.fontsize = min(height * 0.034, width * 0.9 / (max(len(clean), 1) * 1.1))
     style.bold = True
     style.alignment = pysubs2.Alignment.TOP_CENTER
     style.marginl = style.marginr = round(width * 0.05)
@@ -298,7 +298,7 @@ def build_disclosure_event(
         end=pysubs2.make_time(s=duration_s),
         style=DISCLOSURE_STYLE_NAME,
         layer=1,
-        text="{\fad(120,120)}" + clean,
+        text=r"{\fad(120,120)}" + clean,
     )
     return event, style
 

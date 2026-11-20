@@ -12,3 +12,8 @@ Ideas only, **no code copied**: hotclip (AGPL), clips-studio (AGPL), vanz-0/gta6
 Avoid entirely: supoclip (noncommercial).
 
 When code is ported from an MIT project, add its copyright notice here with the file(s) it landed in.
+
+## Where borrowed ideas landed
+- clipper-skill (MIT): the cut-point check idea -> `backend/autoclip/pipeline/cutqa.py` (original code; re-transcribes the first/last
+  5 s of each rendered clip). No code copied.
+- OpenShorts (MIT): layout ideas (facecam over gameplay). `layouts.py` is original code; nothing from OpenShorts `cloud/`.

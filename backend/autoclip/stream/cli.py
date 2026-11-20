@@ -29,7 +29,9 @@ def _root() -> None:
 @app.command("stream")
 def stream_cmd(
     vod: str = typer.Argument(..., help="Twitch VOD link/id, or a path to a local video file."),
-    campaign: str = typer.Option(..., "--campaign", "-c", help="Campaign name (campaigns/<name>.yaml)."),
+    campaign: str = typer.Option(
+        ..., "--campaign", "-c", help="Campaign name (campaigns/<name>.yaml)."
+    ),
     start: str = typer.Option("", "--start", help="Trim start of the VOD, e.g. 1:00:00."),
     end: str = typer.Option("", "--end", help="Trim end of the VOD, e.g. 1:30:00."),
     chat: Path | None = typer.Option(
@@ -54,6 +56,14 @@ def stream_cmd(
     from . import ingest, pipeline
     from .campaigns import load_campaign
 
+    local = Path(vod).exists()
+    if local and (start or end):
+        console.print(
+            "[red]--start/--end only trim Twitch downloads.[/red] A local file is used as it is: "
+            "trim it first (e.g. with ffmpeg) so the chat times still line up."
+        )
+        raise typer.Exit(2)
+
     db_init()
     try:
         camp = load_campaign(campaign)
@@ -64,14 +74,12 @@ def stream_cmd(
     # -- ingest ------------------------------------------------------------
     try:
         with console.status("[cyan]Fetching VOD and chat...", spinner="dots"):
-            if ingest.twitch_vod_id(vod) and not Path(vod).exists():
+            if ingest.twitch_vod_id(vod) and not local:
                 stream = ingest.ingest_twitch_vod(
                     vod, start=start or None, end=end or None, quality=quality
                 )
             else:
-                stream = ingest.ingest_local(
-                    Path(vod), chat_json=chat, trim_start_s=ingest.parse_time(start)
-                )
+                stream = ingest.ingest_local(Path(vod), chat_json=chat)
     except ingest.StreamIngestError as exc:
         console.print(f"[red]Ingest failed.[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -109,7 +117,10 @@ def stream_cmd(
     # -- phase 2 -----------------------------------------------------------
     try:
         outcomes = pipeline.render(
-            prepared, camp, stream=stream, on_status=lambda msg: console.print(f"[cyan]>[/cyan] {msg}")
+            prepared,
+            camp,
+            stream=stream,
+            on_status=lambda msg: console.print(f"[cyan]>[/cyan] {msg}"),
         )
     except pipeline.StreamPipelineError as exc:
         console.print(f"[red]{exc}[/red]")
