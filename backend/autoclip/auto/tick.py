@@ -14,12 +14,34 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import approval, diskguard, poster, runner, submit, watcher
+from . import approval, diskguard, poster, runner, schedule, submit, watcher
 from .config import AutoConfig, auto_dir
 from .notify import Notifier
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Is that process running? (``os.kill(pid, 0)`` would TERMINATE it on Windows.)"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 class TickLock:
@@ -33,10 +55,10 @@ class TickLock:
         if self.path.exists():
             try:
                 pid = int(self.path.read_text().strip())
-                os.kill(pid, 0)  # raises when that process is gone
-                return self
-            except (ValueError, OSError):
-                pass  # stale lock
+                if _pid_alive(pid):
+                    return self
+            except ValueError:
+                pass  # stale or unreadable lock
         self.path.write_text(str(os.getpid()))
         self.held = True
         return self
@@ -57,6 +79,8 @@ def post_cycle(
 ) -> dict[str, int]:
     """The cheap half: previews for new clips, scheduling of approved ones, due posts, reminders."""
     previews = approval.send_pending_previews(store, notifier, config, now)
+    approval.auto_approve_pending(store, config, now)
+    schedule.expire_stale(store, config, now)
     scheduled = poster.schedule_approved(store, config, now)
     posted = poster.post_due(store, config, notifier, client, now=now, gate_kwargs=gate_kwargs)
     submit.send_reminders(store, notifier, now)

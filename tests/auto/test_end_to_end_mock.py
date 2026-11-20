@@ -11,29 +11,35 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from autoclip import paths
-from autoclip.auto import discord_bot, diskguard, runner, tick, tracker, watcher
+from autoclip.auto import discord_bot, diskguard, runner, submit_log, tick, tracker, watcher
 from autoclip.auto.notify import RecordingNotifier
+from autoclip.auto.store import parse_iso
 
 JOB = "e2e0001"
 OWNER = "555"
 
 
 class FakePublisher:
+    """Each upload gets its own request id and only reports on the platforms it was sent to."""
+
     def __init__(self):
         self.uploads = []
+        self.by_request = {}
 
     def upload(self, **kw):
         from autoclip.auto.uploadpost import UploadResult
 
         self.uploads.append(kw)
-        return UploadResult("req-1", [])
+        rid = f"req-{len(self.uploads)}"
+        self.by_request[rid] = list(kw["platforms"])
+        return UploadResult(rid, [])
 
     def status(self, request_id):
         return {
             "status": "completed",
             "results": [
                 {"platform": p, "success": True, "post_url": f"https://{p}.test/clip1"}
-                for p in ("tiktok", "youtube", "instagram")
+                for p in self.by_request[request_id]
             ],
         }
 
@@ -43,10 +49,7 @@ class FakePublisher:
     def post_analytics(self, request_id):
         from autoclip.auto.uploadpost import Metrics
 
-        return {
-            p: Metrics(views=2500, likes=100, comments=5, shares=9)
-            for p in ("tiktok", "youtube", "instagram")
-        }
+        return {p: Metrics(views=2500, likes=100, comments=5, shares=9) for p in self.by_request[request_id]}
 
 
 def twitch_client(now):
@@ -135,38 +138,42 @@ def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
     reply, _ = discord_bot.handle_button(env.store, env.config, f"a:{cid}", OWNER)
     assert reply == "Approved."
 
-    # 3. /pause while the post is queued and due: the upload must NOT happen
+    # 3. /pause while the posts are queued and due: no upload may happen
     env.store.set_paused(True, "test")
     tick.post_cycle(env.store, env.config, notifier, publisher, now=now, gate_kwargs=kw)
-    (post,) = env.store.list_posts()
-    with env.store._conn() as con:  # make it due now
-        con.execute("UPDATE posts SET scheduled_for=?", ((now - timedelta(minutes=1)).isoformat(),))
-    tick.post_cycle(env.store, env.config, notifier, publisher, now=now, gate_kwargs=kw)
-    assert publisher.uploads == [] and env.store.get_post(post["id"])["status"] == "queued"
+    posts = env.store.list_posts()
+    assert len(posts) == 3 and all(len(p["platforms"]) == 1 for p in posts)  # one row per platform
+    times = sorted(parse_iso(p["scheduled_for"]) for p in posts)
+    assert times[1] - times[0] >= timedelta(minutes=60)  # platforms are staggered 1-2 h apart
+    assert times[2] - times[1] >= timedelta(minutes=60)
+    far = now + timedelta(hours=12)  # everything is due by then
+    tick.post_cycle(env.store, env.config, notifier, publisher, now=far, gate_kwargs=kw)
+    assert publisher.uploads == [] and {p["status"] for p in env.store.list_posts()} == {"queued"}
+    assert env.store.pause_file.exists()  # the PAUSE flag file is the kill switch
 
-    # 4. /resume: it posts, the chat gets the URLs and the submit-now reminder
+    # 4. /resume: each platform posts once; the chat gets the URLs and the submit-now reminder
     env.store.set_paused(False, "test")
-    tick.post_cycle(env.store, env.config, notifier, publisher, now=now, gate_kwargs=kw)
-    assert len(publisher.uploads) == 1, (
-        [(p["status"], p["error"]) for p in env.store.list_posts()],
-        [e["detail"] for e in env.store.events("gate_denied")],
-    )
-    assert sorted(publisher.uploads[0]["platforms"]) == ["instagram", "tiktok", "youtube"]
-    final = env.store.get_post(post["id"])
-    assert final["status"] == "posted" and final["results"]["tiktok"]["url"].startswith("https://")
+    assert not env.store.pause_file.exists()
+    tick.post_cycle(env.store, env.config, notifier, publisher, now=far, gate_kwargs=kw)
+    reasons = [e["detail"] for e in env.store.events("gate_denied")]
+    assert len(publisher.uploads) == 3, ([(p["status"], p["error"]) for p in env.store.list_posts()], reasons)
+    assert sorted(u["platforms"][0] for u in publisher.uploads) == ["instagram", "tiktok", "youtube"]
+    assert {p["status"] for p in env.store.list_posts()} == {"posted"}
     text = [t for t, _ in notifier.texts if "SUBMIT TO THE CAMPAIGN NOW" in t]
-    assert text and "youtube.test/clip1" in text[0]
+    assert len(text) == 3 and any("youtube.test/clip1" in t for t in text)
     assert env.store.get_clip(cid)["status"] == "posted"
+    submit_rows = list(csv.DictReader(open(submit_log.csv_path(), encoding="utf-8")))
+    assert {r["platform"] for r in submit_rows} == {"tiktok", "youtube", "instagram"}  # posted_to_submit.csv
 
     # 5. a second cycle never uploads the same clip again
-    tick.post_cycle(env.store, env.config, notifier, publisher, now=now, gate_kwargs=kw)
-    assert len(publisher.uploads) == 1
+    tick.post_cycle(env.store, env.config, notifier, publisher, now=far, gate_kwargs=kw)
+    assert len(publisher.uploads) == 3
 
     # 6. views are pulled and a tracker row exists
-    tracker.pull_views(env.store, env.config, publisher)
+    tracker.pull_views(env.store, env.config, publisher, now=far + timedelta(days=1))
     rows = list(csv.DictReader(open(env.config.tracker_csv(), encoding="utf-8")))
     assert {r["platform"] for r in rows} == {"tiktok", "youtube", "instagram"}
-    assert all(int(r["views"]) == 2500 for r in rows)
+    assert all(int(r["views"]) == 2500 for r in rows), rows
     assert float(rows[0]["estimated_usd"]) == pytest.approx(2.5)  # 2500 views at $1.00 per 1k
 
 

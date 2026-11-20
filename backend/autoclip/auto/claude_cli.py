@@ -43,12 +43,16 @@ def build_command(
     add_dirs: list[Path],
     max_turns: int,
     claude_path: str | None = None,
+    permission_mode: str = "acceptEdits",
+    disallowed_tools: list[str] | None = None,
 ) -> list[str]:
     cmd = [claude_path or find_claude(), "-p", prompt, "--model", model]
-    cmd += ["--permission-mode", "acceptEdits", "--max-turns", str(max_turns)]
+    cmd += ["--permission-mode", permission_mode, "--max-turns", str(max_turns)]
     cmd += ["--output-format", "text"]
     if allowed_tools:
         cmd += ["--allowedTools", ",".join(allowed_tools)]
+    if disallowed_tools:
+        cmd += ["--disallowedTools", ",".join(disallowed_tools)]
     for directory in add_dirs:
         cmd += ["--add-dir", str(directory)]
     return cmd
@@ -65,10 +69,13 @@ def run_claude(
     timeout_s: int = 1500,
     runner: Runner = subprocess.run,
     claude_path: str | None = None,
+    permission_mode: str = "acceptEdits",
+    disallowed_tools: list[str] | None = None,
 ) -> ClaudeResult:
     cmd = build_command(
         prompt, model=model, allowed_tools=allowed_tools, add_dirs=add_dirs or [],
-        max_turns=max_turns, claude_path=claude_path,
+        max_turns=max_turns, claude_path=claude_path, permission_mode=permission_mode,
+        disallowed_tools=disallowed_tools,
     )  # fmt: skip
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # use the plan login
     try:
@@ -81,3 +88,7 @@ def run_claude(
     except OSError as exc:
         raise ClaudeCliError(f"could not start claude: {exc}") from exc
     return ClaudeResult(text=(done.stdout or "").strip(), returncode=done.returncode)
+
+
+#: Never available to a headless run: the transcripts and chat it reads are untrusted text.
+UNTRUSTED_DISALLOWED = ["Bash", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task"]

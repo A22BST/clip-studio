@@ -49,7 +49,8 @@ def test_selection_runs_claude_headless_and_validates(env, work):
     out = select.run_selection(JOB, env.config, runner=fake, cwd=Path.cwd())
     assert out == work / "highlights.json"
     cmd = seen["cmd"]
-    assert cmd[1] == "-p" and cmd[2].startswith(f"/clip {JOB}")
+    assert cmd[1] == "-p" and f"stream job {JOB}" in cmd[2]
+    assert "--disallowedTools" in cmd and "Bash" in cmd[cmd.index("--disallowedTools") + 1]
     assert cmd[cmd.index("--model") + 1] == "sonnet"
     assert "Do NOT run `clip stream`" in cmd[2]
     assert "ANTHROPIC_API_KEY" not in seen["env"]

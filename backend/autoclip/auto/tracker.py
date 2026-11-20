@@ -73,8 +73,10 @@ def append_post_rows(store: Store, config: AutoConfig) -> None:
     os.replace(temporary, path)
 
 
-def pull_views(store: Store, config: AutoConfig, client: UploadPostClient) -> None:
-    now = datetime.now(UTC)
+def pull_views(
+    store: Store, config: AutoConfig, client: UploadPostClient, now: datetime | None = None
+) -> None:
+    now = now or datetime.now(UTC)
     for post in store.list_posts("posted"):
         posted_at = parse_iso(post["posted_at"])
         if (

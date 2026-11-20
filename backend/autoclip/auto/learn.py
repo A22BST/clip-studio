@@ -8,6 +8,7 @@ headless /clip run reads next time and (b) a short earnings report sent to Teleg
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -114,8 +115,10 @@ def run_weekly(
     result = claude_cli.run_claude(
         PROMPT.format(days=stats["days"], previous=previous, data=json.dumps(stats, indent=1)),
         model="sonnet",
-        cwd=REPO_ROOT,
+        cwd=Path(tempfile.mkdtemp(prefix="clip-learn-")),
         allowed_tools=[],
+        permission_mode="default",
+        disallowed_tools=claude_cli.UNTRUSTED_DISALLOWED + ["Write", "Read", "Glob", "Grep"],
         max_turns=3,
         timeout_s=600,
         **kwargs,

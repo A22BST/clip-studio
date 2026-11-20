@@ -120,7 +120,7 @@ def test_happy_path_real_http_client(env, make_clip):
     client = UploadPostClient(httpx.Client(transport=httpx.MockTransport(handler)))
     notifier = RecordingNotifier()
     assert run(env, notifier, client, now) == [pid]
-    assert calls[0].headers["Idempotency-Key"] == f"clip-{cid}-post-{pid}"
+    assert calls[0].headers["Idempotency-Key"] == f"clip-{cid}-tiktok"
     assert len(calls) == 2
     post = env.store.get_post(pid)
     assert post["status"] == "posted"

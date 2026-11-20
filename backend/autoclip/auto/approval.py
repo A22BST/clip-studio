@@ -161,3 +161,23 @@ def status_text(store: Store, config: AutoConfig) -> str:
     # Only event kinds/timestamps: arbitrary event details may contain sensitive information.
     lines += [f"{e['ts']} {e['kind']}" for e in store.events(limit=3)]
     return "\n".join(lines)
+
+
+def auto_approve_pending(store: Store, config: AutoConfig, now: datetime | None = None) -> int:
+    """Level 2 only (``level: 2`` AND ``auto_approve.enabled: true``): approve previewed clips whose
+    QA is at or above ``auto_approve.min_qa``. With level 2 off this does nothing at all. The gate
+    still re-checks everything (rules, hash, caps) at post time and honours the review delay."""
+    if not config.level2_active:
+        return 0
+    approved = 0
+    for clip in store.list_clips("pending_approval"):
+        if not clip["previewed_sha256"] or clip["qa_score"] < config.auto_approve.min_qa:
+            continue
+        try:
+            if sha256_file(Path(clip["path"])) != clip["previewed_sha256"]:
+                continue
+            store.approve_clip(clip["id"], "auto:level2", clip["previewed_sha256"])
+            approved += 1
+        except (OSError, StoreError):
+            continue
+    return approved

@@ -104,7 +104,8 @@ def _evaluate(
     clip = store.get_clip(clip_id)
     if clip is None:
         return [f"clip {clip_id} does not exist"]
-    if clip["status"] != "approved":
+    # "posted" = another platform of this clip already went out; the approval fields still apply
+    if clip["status"] not in ("approved", "posted") or not clip["approved_by"]:
         return [f"clip status is {clip['status']!r}, not 'approved'"]
 
     # -- who approved it ------------------------------------------------------------
@@ -191,13 +192,23 @@ def _evaluate(
     )
     deny += [f"rules: {v.message}" for v in result.violations if v.blocking]
 
-    # -- daily cap -------------------------------------------------------------------
+    # -- caps and per-platform throttle ------------------------------------------------
     tz = ZoneInfo(config.post.timezone)
     local_day = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     start, end = local_day.astimezone(UTC), (local_day + timedelta(days=1)).astimezone(UTC)
     todays = [p for p in store.posts_between(start, end) if p["id"] != post_id]
-    if len([p for p in todays if p["status"] == "posted"]) >= config.post.max_per_day:
+    done_today = [p for p in todays if p["status"] == "posted"]
+    if len(done_today) >= config.post.max_per_day:
         deny.append(f"daily cap of {config.post.max_per_day} posts reached")
+    from .schedule import daily_cap
+
+    for platform in platforms:
+        until = store.platform_pause_until(platform)
+        if until and now < until:
+            deny.append(f"{platform} is paused by the auto-throttle until {until:%Y-%m-%d %H:%M} UTC")
+        cap = daily_cap(store, config, platform, now)
+        if sum(platform in p["platforms"] for p in done_today) >= cap:
+            deny.append(f"{platform} daily cap of {cap} reached")
     return deny
 
 

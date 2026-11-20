@@ -60,7 +60,7 @@ FAIL / not met:
 - Next (build session 2, not started): automation layer, plan section 5.
 
 ## Build session 2 (2026-11-20): automation layer, branch `claude/automation-layer-3d84f1` (NOT merged into main)
-Package `backend/autoclip/auto/` (CLI `clip-auto`, or `python -m autoclip.auto.cli`). 154 tests in `tests/auto/` pass.
+Package `backend/autoclip/auto/` (CLI `clip-auto`, or `python -m autoclip.auto.cli`). 171 tests in `tests/auto/` pass (full suite: 651 passed, 24 skipped).
 Session 1's files were not edited; it is used only through `clip stream`, `report.json` and `highlights.json`.
 
 Built (what exists, tested with mocks):
@@ -89,3 +89,28 @@ Needs Ahmad before a real end-to-end run:
 4. `campaigns/assets/kreekcraft-logo.png`; campaign end date, budget and submit link in `campaigns/auto/kreekcraft-gta6.yaml`.
 5. `uv pip install -e ".[auto]"` (discord.py, python-telegram-bot[job-queue]); then `clip-auto install-tasks --apply` once approved.
 6. Merge decision: branch is not merged; `pyproject.toml` gained the `auto` extra and `clip-auto` script.
+
+### Safe-posting additions and the Opus safety review (3f)
+Ahmad (via the strategy session) asked for no-approval, safe-volume posting. Decision asked and confirmed in chat: **human approval stays the
+default** (level 1). No-approval is a config switch (`level: 2` + `auto_approve.enabled: true` in `~/.autoclip/auto/config.yaml`), not the default.
+Added (all configurable under `post:` / `throttle:`): per-platform daily caps ramping 1 / 2 / 3 by account week, >= 4 h between posts on one platform
+(+ up to 30 min jitter), one post row per platform staggered 60-120 min, best QA first, clips expire after 48 h unposted (`schedule.py`);
+auto-throttle: last 3 posts < 20% of the 7-day average -> platform paused 48 h and cap halved, logged (`throttle.py`, run after `clip-auto track`);
+`clip-auto report-removal <platform>` pauses everything until `clip-auto resume`; a `PAUSE` file next to `auto.db` is checked by the gate before
+every post (`clip-auto pause` / `resume` create / remove it); `posted_to_submit.csv` (every URL + its 30-minute deadline) in `~/.autoclip/auto/`;
+level-2 auto-approval code path (`approval.auto_approve_pending`, off unless both switches are set; the gate re-checks everything).
+NOT built (spec changed several times, needs a decision): `TelegramManualPublisher` (file as document + per-platform captions + "Posted on X" buttons),
+YouTube Data API / Instagram Graph comment pulling, and the comment-themes part of the learning loop (`learn.py` uses views only).
+The clip-auto CLI is `clip-auto pause`, not `clip auto pause` (the `clip` CLI is session 1's).
+
+Opus review result (before these additions): no path posted without rules + approval, with one exception, now fixed:
+- BLOCKING (fixed): the headless `claude -p` selection (reads untrusted chat/transcripts) ran with write access to the repo and config; it now runs with
+  its cwd set to the job's own work folder, the skill text is passed in the prompt, and Bash/Edit/web tools are disallowed (`select.py`, `claude_cli.py`);
+  the weekly learn run gets no tools and a scratch cwd.
+- MAJOR (fixed): a failed/denied post re-queued the same clip (duplicate upload risk): now the clip is retired (`post_failed`/`expired`), and the idempotency key is per clip + platform.
+- MAJOR (fixed): `TickLock` used `os.kill(pid, 0)`, which TERMINATES a process on Windows: replaced with a safe liveness check.
+- MAJOR (fixed): a Telegram group chat id is refused (any member could approve).
+- Open MINOR items: the upload re-reads the file after the hash check (copy to an immutable `approved/<sha>.mp4` would close it); an old preview's Approve
+  button approves the newest version after a hook edit; a dismissed Discord edit modal leaves the clip in `editing`; httpx INFO logging could show the Telegram
+  token URL if logging is ever raised to INFO; the hand-post message includes the local file path.
+- Bug found by the new end-to-end test and fixed: with one post row per platform the gate rejected the 2nd and 3rd platform after the 1st marked the clip `posted`.

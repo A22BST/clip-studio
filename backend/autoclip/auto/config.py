@@ -31,15 +31,26 @@ class AutoApprove(_Section):
     #: Clips at or above this QA score may post without a tap (level 2 only).
     min_qa: int = Field(default=90, ge=1, le=100)
     #: Minutes between approval and posting so Ahmad can delete it.
-    delay_minutes: int = Field(default=60, ge=1)
+    delay_minutes: int = Field(default=60, ge=0)
 
 
 class PostConfig(_Section):
     #: Local clock times (HH:MM, in ``timezone``) at which a post may go out.
     slots: list[str] = ["11:00", "14:00", "17:30", "20:00", "22:00"]
     timezone: str = "Europe/Copenhagen"
-    max_per_day: int = Field(default=4, ge=1)
+    #: Safety net across all platforms (3 platforms x 3 posts).
+    max_per_day: int = Field(default=9, ge=1)
     min_gap_minutes: int = Field(default=90, ge=1)
+    #: Posts per platform per day by account age: week 1, week 2, week 3 and later.
+    per_platform_daily_caps: list[int] = [1, 2, 3]
+    min_gap_hours_per_platform: float = Field(default=4.0, ge=0)
+    jitter_minutes: int = Field(default=30, ge=0)
+    #: The same clip goes to its platforms this many minutes apart (random in the range).
+    stagger_minutes: tuple[int, int] = (60, 120)
+    #: A clip that cannot be scheduled within this many hours of approval expires.
+    queue_expiry_hours: float = Field(default=48, gt=0)
+    #: Account start (YYYY-MM-DD) for the week counter; empty = first scheduled post.
+    start_date: str = ""
     platforms: list[str] = ["tiktok", "youtube", "instagram"]
     #: An approved-but-unposted clip older than this is expired, never posted.
     approval_ttl_hours: float = Field(default=48, gt=0)
@@ -52,6 +63,13 @@ class PostConfig(_Section):
             if not (0 <= int(hh) < 24 and 0 <= int(mm) < 60):
                 raise ValueError(f"bad slot {slot!r}")
         return sorted(value)
+
+
+class ThrottleConfig(_Section):
+    enabled: bool = True
+    #: Pause a platform when its last 3 posts average below this share of its 7-day average.
+    drop_ratio: float = Field(default=0.2, gt=0, lt=1)
+    pause_hours: float = Field(default=48, gt=0)
 
 
 class UploadPostConfig(_Section):
@@ -103,6 +121,7 @@ class AutoConfig(_Section):
     disk: DiskConfig = DiskConfig()
     selection: SelectionConfig = SelectionConfig()
     tracker: TrackerConfig = TrackerConfig()
+    throttle: ThrottleConfig = ThrottleConfig()
     #: Delete the downloaded VOD after a job finishes (exports are kept).
     delete_source_after_render: bool = True
 

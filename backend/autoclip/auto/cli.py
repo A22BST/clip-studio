@@ -103,7 +103,12 @@ def track() -> None:
     if client is None:
         console.print("[red]UPLOAD_POST_API_KEY is not set.[/red]")
         raise typer.Exit(1)
-    tracker.pull_views(Store(), config, client)
+    store = Store()
+    tracker.pull_views(store, config, client)
+    from . import throttle
+
+    for platform in throttle.evaluate(store, config):
+        console.print(f"[yellow]Throttled {platform}: paused 48 h, cap halved.[/yellow]")
     console.print(f"Tracker: {config.tracker_csv()}")
 
 
@@ -136,6 +141,15 @@ def status() -> None:
             "level2_active": config.level2_active,
         }
     )
+
+
+@app.command("report-removal")
+def report_removal(platform: str, reason: str = "removed / strike / copyright claim") -> None:
+    """A post was removed or got a strike: pause EVERYTHING until `clip-auto resume`."""
+    from . import throttle
+
+    throttle.report_removal(Store(), platform, reason)
+    console.print("Everything is paused. Run `clip-auto resume` after you have looked at it.")
 
 
 @app.command()

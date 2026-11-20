@@ -157,12 +157,38 @@ class Store:
         with self._conn() as con:
             con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, value))
 
+    @property
+    def pause_file(self) -> Path:
+        """A PAUSE file next to the database: the kill switch that needs no chat app."""
+        name = "PAUSE" if self.path.name == "auto.db" else f"{self.path.stem}.PAUSE"
+        return self.path.parent / name
+
     def is_paused(self) -> bool:
-        return self.get_meta("paused", "0") == "1"
+        return self.get_meta("paused", "0") == "1" or self.pause_file.exists()
 
     def set_paused(self, paused: bool, by: str = "") -> None:
         self.set_meta("paused", "1" if paused else "0")
+        if paused:
+            self.pause_file.write_text(f"paused by {by} at {now_iso()}", encoding="utf-8")
+        else:
+            self.pause_file.unlink(missing_ok=True)
         self.log_event("pause" if paused else "resume", by)
+
+    # -- per-platform throttle state ---------------------------------------------------
+    def platform_pause_until(self, platform: str) -> datetime | None:
+        return parse_iso(self.get_meta(f"platform_pause:{platform}") or None)
+
+    def set_platform_pause(self, platform: str, until: datetime | None) -> None:
+        self.set_meta(f"platform_pause:{platform}", now_iso(until) if until else "")
+
+    def cap_factor(self, platform: str) -> float:
+        try:
+            return float(self.get_meta(f"cap_factor:{platform}", "1") or 1)
+        except ValueError:
+            return 1.0
+
+    def set_cap_factor(self, platform: str, factor: float) -> None:
+        self.set_meta(f"cap_factor:{platform}", str(factor))
 
     def log_event(self, kind: str, detail: str = "") -> None:
         with self._conn() as con:
@@ -329,11 +355,13 @@ class Store:
             raise StoreError(f"clip {clip_id} is not approved: refusing to queue a post")
         with self._conn() as con:
             live = con.execute(
-                "SELECT 1 FROM posts WHERE clip_id=? AND status IN ('queued','posting','posted')",
+                "SELECT platforms FROM posts WHERE clip_id=? "
+                "AND status IN ('queued','posting','posted')",
                 (clip_id,),
-            ).fetchone()
-            if live:
-                raise StoreError(f"clip {clip_id} already has a post")
+            ).fetchall()
+            taken = {p for row in live for p in json.loads(row["platforms"])}
+            if taken & set(platforms):
+                raise StoreError(f"clip {clip_id} already has a post on {sorted(taken & set(platforms))}")
             cur = con.execute(
                 "INSERT INTO posts(clip_id,scheduled_for,platforms,created_at) VALUES(?,?,?,?)",
                 (clip_id, now_iso(scheduled_for), json.dumps(platforms), now_iso()),

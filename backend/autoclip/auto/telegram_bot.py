@@ -177,6 +177,11 @@ def run_bot(
     rerender: Rerender | None = None,
     extra_jobs: list[Callable[[Store], object]] | None = None,
 ) -> None:
+    owner = chat_id if chat_id is not None else secrets.get_secret(secrets.TELEGRAM_CHAT_ID)
+    if owner is None or str(owner).startswith("-"):
+        raise RuntimeError(
+            "TELEGRAM_CHAT_ID must be a private chat id (a group would let any member approve)"
+        )
     application = build_application(
         store or Store(),
         config or load_config(),

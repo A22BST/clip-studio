@@ -15,6 +15,7 @@ from . import gate
 from .campaign_meta import load_auto_campaign
 from .config import AutoConfig
 from .notify import Button, Notifier
+from . import submit_log
 from .preview import make_preview
 from .publisher import MANUAL_URL, split_platforms
 from .store import Store, parse_iso
@@ -55,30 +56,10 @@ def schedule_approved(
     config: AutoConfig,
     now: datetime | None = None,
 ) -> list[int]:
-    now = now or datetime.now(UTC)
-    live = {
-        p["clip_id"] for p in store.list_posts() if p["status"] in ("queued", "posting", "posted")
-    }
-    scheduled = []
-    for clip in store.list_clips("approved"):
-        if clip["id"] in live:
-            continue
-        campaign = load_auto_campaign(clip["campaign_key"]).campaign
-        platforms = [p for p in config.post.platforms if p in campaign.platforms]
-        if not platforms:
-            store.log_event("schedule_skipped", f"clip {clip['id']}: no shared platforms")
-            continue
-        earliest = now
-        if clip["approved_by"] == "auto:level2":
-            earliest = max(
-                now,
-                parse_iso(clip["approved_at"])
-                + timedelta(minutes=config.auto_approve.delay_minutes),
-            )
-        scheduled.append(
-            store.enqueue_post(clip["id"], next_slot(store, config, earliest), platforms)
-        )
-    return scheduled
+    """Queue approved clips with the safe-posting rules (see schedule.py)."""
+    from . import schedule
+
+    return schedule.schedule_approved(store, config, now)
 
 
 def _buttons(post_id, auto):
@@ -159,6 +140,18 @@ def _announce(notifier, post, auto):
     text = "Posted. SUBMIT TO THE CAMPAIGN NOW: deadline "
     text += f"{deadline:%H:%M} ({auto.campaign.submit_deadline_min} min) UTC"
     notifier.send_text(text + "\n" + "\n".join(links), _buttons(post["id"], auto))
+
+
+def _retire_clip(store: Store, clip_id: int, status: str) -> None:
+    """A permanent denial or failure: stop the clip from being queued again (no re-upload loop)."""
+    clip = store.get_clip(clip_id)
+    live = [
+        p for p in store.list_posts()
+        if p["clip_id"] == clip_id and p["status"] in ("queued", "posting", "posted")
+    ]
+    if clip and clip["status"] == "approved" and not live:
+        with suppress(Exception):
+            store.set_clip_status(clip_id, status)
 
 
 def _send_hand_post(notifier, clip, manual, auto) -> None:
@@ -252,6 +245,7 @@ def post_due(
                 store.release_post(post_id, reason)
                 if not paused:
                     store.cancel_post(post_id, reason)
+                    _retire_clip(store, clip_id, "expired")
                     notifier.send_text(f"Post {post_id} cancelled: {reason}")
                 continue
         clip = store.get_clip(clip_id)
@@ -273,7 +267,7 @@ def post_due(
                     caption=clip["caption"],
                     hashtags=clip["hashtags"],
                     campaign=auto,
-                    idempotency_key=f"clip-{clip_id}-post-{post_id}",
+                    idempotency_key=f"clip-{clip_id}-{'-'.join(api_platforms)}",
                 )
                 request_id = upload.request_id
                 _merge(results, upload.immediate_results, api_platforms)
@@ -285,6 +279,7 @@ def post_due(
                         store.release_post(post_id, str(exc), retry_at=now + timedelta(minutes=15))
                     else:
                         store.fail_post(post_id, str(exc))
+                        _retire_clip(store, clip_id, "post_failed")
                         notifier.send_text(f"Post {post_id} failed: {exc}")
                     continue
             _save_request(store, post_id, request_id, results)
@@ -300,6 +295,8 @@ def post_due(
             submit_deadline=now + timedelta(minutes=auto.campaign.submit_deadline_min),
         )
         _announce(notifier, store.get_post(post_id), auto)
+        with suppress(Exception):
+            submit_log.append_posted(store, config, post_id)
         if manual:
             _send_hand_post(notifier, clip, manual, auto)
         finished.append(post_id)

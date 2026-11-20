@@ -228,7 +228,7 @@ def test_run_bot_polling_options(monkeypatch):
     build = Mock(return_value=app)
     monkeypatch.setattr(telegram_bot, "build_application", build)
     monkeypatch.setattr(telegram_bot.secrets, "require_secret", Mock(return_value="123:abc"))
-    telegram_bot.run_bot(store=Mock(), config=AutoConfig())
+    telegram_bot.run_bot(store=Mock(), config=AutoConfig(), chat_id=123)
     app.run_polling.assert_called_once_with(
         drop_pending_updates=False, allowed_updates=["message", "callback_query"]
     )
