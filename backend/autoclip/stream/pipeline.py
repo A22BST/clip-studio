@@ -544,6 +544,7 @@ def render(
 
         # -- swear filter ----------------------------------------------------
         audio_filter = ""
+        muted: list[tuple[float, float]] = []
         render_words = words
         if campaign.swear_filter != "off":
             render_words = censor_words(words, campaign.swear_filter)
@@ -552,7 +553,8 @@ def render(
                     (max(0.0, a - clip.start_s), min(duration, b - clip.start_s))
                     for a, b in profane_intervals(words)
                 ]
-                audio_filter = bleep_audio_filter([iv for iv in intervals if iv[1] > iv[0]])
+                muted = [iv for iv in intervals if iv[1] > iv[0]]
+                audio_filter = bleep_audio_filter(muted)
 
         destination = out_dir / export.output_filename(clip.title or f"clip-{clip.rank}", ratio)
         request = export.ExportRequest(
@@ -595,8 +597,8 @@ def render(
         qa_score = result.qa_score
         edge_issues = cutqa.check_clip_edges(
             destination,
-            [w.text for w in render_words if "*" not in w.text][:4],
-            [w.text for w in render_words if "*" not in w.text][-4:],
+            _audible_words(render_words, clip.start_s, muted)[:4],
+            _audible_words(render_words, clip.start_s, muted)[-4:],
         )
         for issue in edge_issues:
             notes.append(f"cut-point {issue.severity} ({issue.edge}): {issue.message}")
@@ -635,6 +637,17 @@ def render(
     store.update_job(prepared.job.id, status="done", progress=1.0)
     write_report(outcomes, out_dir, campaign=campaign.name)
     return outcomes
+
+
+def _audible_words(words, clip_start_s: float, muted: list[tuple[float, float]]) -> list[str]:
+    """Words that are really audible in the render (bleeped/masked ones cannot be re-heard)."""
+    keep = []
+    for w in words:
+        a, b = w.start - clip_start_s, w.end - clip_start_s
+        if "*" in w.text or any(a < hi + 0.1 and b > lo - 0.1 for lo, hi in muted):
+            continue
+        keep.append(w.text)
+    return keep
 
 
 def _blur_windows(ranges: list[tuple[int, int]], transcript, clip: Clip, notes: list[str]) -> list:

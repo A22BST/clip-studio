@@ -1,7 +1,6 @@
 import wave
 
 import numpy as np
-
 from autoclip.pipeline import transcribe
 
 

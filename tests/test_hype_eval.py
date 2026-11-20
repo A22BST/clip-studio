@@ -18,3 +18,19 @@ def test_offset_and_range_filter_for_trimmed_downloads():
 
 def test_no_clips_gives_zero():
     assert hit_rate([], [(0, 1)])[0] == 0.0
+
+
+def test_user_env_prefers_process_env_and_never_raises(monkeypatch):
+    from autoclip.stream.hype_eval import user_env
+
+    monkeypatch.setenv("CLIPSTUDIO_TEST_VAR", "abc")
+    assert user_env("CLIPSTUDIO_TEST_VAR") == "abc"
+    assert user_env("CLIPSTUDIO_SURELY_UNSET_VAR_12345") is None
+
+
+def test_overlap_mode_counts_clip_span_not_just_its_start():
+    clip = [ViewerClip(100.0, 10, "x", 30.0)]  # clip spans 100-130 s
+    windows = [(150.0, 170.0)]
+    assert hit_rate(clip, windows, tolerance_s=10)[0] == 0.0  # start point is 40 s away
+    assert hit_rate(clip, windows, tolerance_s=25, overlap=True)[0] == 1.0  # span reaches 125
+    assert hit_rate(clip, windows, tolerance_s=10, overlap=True)[0] == 0.0

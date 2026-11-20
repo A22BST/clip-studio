@@ -99,3 +99,14 @@ def test_stream_date_unknown_is_none_so_today_only_blocks(tmp_path):
     camp = Campaign(name="c", min_duration_s=1, max_duration_s=90, today_only=True)
     res = check_clip(camp, ClipFacts(duration_s=30, title="t", hook="h"))
     assert any(v.code == "missing_stream_date" for v in res.violations)
+
+
+def test_audible_words_skip_bleeped_and_masked_words():
+    words = [
+        Word("fuck", 10.0, 10.4),
+        Word("it", 10.4, 10.6),
+        Word("you", 11.0, 11.3),
+        Word("f***", 12, 12.2),
+    ]
+    assert pipeline._audible_words(words, 10.0, [(0.0, 0.45)]) == ["you"]
+    assert pipeline._audible_words(words, 10.0, []) == ["fuck", "it", "you"]

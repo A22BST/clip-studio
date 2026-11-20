@@ -25,6 +25,26 @@ class TwitchApiError(RuntimeError):
     pass
 
 
+def user_env(name: str) -> str | None:
+    """Read an environment variable, falling back to the Windows *user* environment.
+
+    A variable set with ``setx`` / System Properties is not visible to an already running
+    shell; reading HKCU\Environment lets a fresh process find it without a restart. The value
+    is returned to the caller only: never print, log or write it anywhere.
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            registry_value, _kind = winreg.QueryValueEx(key, name)
+            return str(registry_value) or None
+    except (ImportError, OSError):
+        return None
+
+
 @dataclass
 class ViewerClip:
     offset_s: float  # seconds from the start of the VOD
@@ -52,8 +72,8 @@ def fetch_viewer_clips(
     vod_id: str, *, client_id: str | None = None, client_secret: str | None = None
 ) -> list[ViewerClip]:
     """All viewer clips of one VOD (by ``video_id``), most viewed first."""
-    client_id = client_id or os.environ.get("TWITCH_CLIENT_ID")
-    client_secret = client_secret or os.environ.get("TWITCH_CLIENT_SECRET")
+    client_id = client_id or user_env("TWITCH_CLIENT_ID")
+    client_secret = client_secret or user_env("TWITCH_CLIENT_SECRET")
     if not client_id or not client_secret:
         raise TwitchApiError(
             "Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET (Twitch developer app)."
@@ -113,8 +133,13 @@ def hit_rate(
     tolerance_s: float = 30.0,
     offset_s: float = 0.0,
     max_s: float | None = None,
+    overlap: bool = False,
 ) -> tuple[float, list[tuple[ViewerClip, bool]]]:
     """Share of the ``top_clips`` most-viewed viewer clips inside a hype window (+/- tolerance).
+
+    With ``overlap=True`` a viewer clip counts when its whole span ``[offset, offset+duration]``
+    touches a window (the moment is somewhere inside the ~30 s clip); the default tests the
+    clip's start point only (the strict check).
 
     ``offset_s`` converts VOD time to file time for a trimmed download (pass the trim
     start); ``max_s`` drops clips beyond the downloaded range. Returns (rate, details).
@@ -127,9 +152,11 @@ def hit_rate(
         chosen.append(ViewerClip(t, clip.views, clip.title, clip.duration_s))
         if len(chosen) == top_clips:
             break
-    details = [
-        (c, any(a - tolerance_s <= c.offset_s <= b + tolerance_s for a, b in windows))
-        for c in chosen
-    ]
+
+    def touches(clip: ViewerClip, a: float, b: float) -> bool:
+        end = clip.offset_s + (clip.duration_s if overlap else 0.0)
+        return clip.offset_s <= b + tolerance_s and end >= a - tolerance_s
+
+    details = [(c, any(touches(c, a, b) for a, b in windows)) for c in chosen]
     rate = sum(hit for _, hit in details) / len(details) if details else 0.0
     return rate, details

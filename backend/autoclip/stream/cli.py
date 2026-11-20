@@ -149,6 +149,85 @@ def stream_cmd(
     )
 
 
+@app.command("hype-check")
+def hype_check_cmd(
+    vod: str = typer.Argument(..., help="Twitch VOD link/id that `clip stream` already prepared."),
+    candidates: Path | None = typer.Option(
+        None, "--candidates", help="candidates.json to check (default: newest one for this VOD)."
+    ),
+    start: str = typer.Option("", "--start", help="The trim start used when it was downloaded."),
+    end: str = typer.Option("", "--end", help="The trim end used when it was downloaded."),
+    top_clips: int = typer.Option(10, "--top-clips", help="Most-viewed viewer clips to test."),
+    tolerance: float = typer.Option(30.0, "--tolerance", help="Seconds of slack around windows."),
+    overlap: bool = typer.Option(
+        False,
+        "--overlap/--start-only",
+        help="Count a viewer clip when any part of its span touches a window.",
+    ),
+) -> None:
+    """Check hype detection against clips viewers made of the same VOD (needs Twitch API keys).
+
+    Passes when at least 60% of the most-viewed viewer clips fall inside a top-15 hype window.
+    The hype windows come from candidates.json, which is computed WITHOUT the viewer-clip
+    signal, so the check is not circular.
+    """
+    import json
+
+    from .. import paths
+    from . import hype_eval, ingest
+
+    vod_id = ingest.twitch_vod_id(vod)
+    if vod_id is None:
+        console.print("[red]Not a Twitch VOD link or id.[/red]")
+        raise typer.Exit(2)
+    if candidates is None:
+        found = sorted(
+            paths.work_dir().glob("*/candidates.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        found = [p for p in found if json.loads(p.read_text("utf-8"))["stream"]["vod_id"] == vod_id]
+        if not found:
+            console.print("[red]No candidates.json for this VOD. Run `clip stream` first.[/red]")
+            raise typer.Exit(1)
+        candidates = found[0]
+    data = json.loads(candidates.read_text("utf-8"))
+    windows = [(c["window_start_s"], c["window_end_s"]) for c in data["candidates"]][:15]
+    offset = ingest.parse_time(start)
+    max_s = (ingest.parse_time(end) - offset) if end else data["stream"]["duration_s"]
+    try:
+        clips = hype_eval.fetch_viewer_clips(vod_id)
+    except hype_eval.TwitchApiError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    rate, details = hype_eval.hit_rate(
+        clips,
+        windows,
+        top_clips=top_clips,
+        tolerance_s=tolerance,
+        offset_s=offset,
+        max_s=max_s,
+        overlap=overlap,
+    )
+    table = Table(title="Viewer clips vs hype windows", header_style="bold", title_justify="left")
+    for col in ("Views", "At", "In a window", "Title"):
+        table.add_column(col)
+    for clip, hit in details:
+        mm, ss = divmod(int(clip.offset_s), 60)
+        table.add_row(
+            str(clip.views),
+            f"{mm}:{ss:02d}",
+            "[green]yes[/green]" if hit else "[red]no[/red]",
+            clip.title[:50],
+        )
+    console.print(table)
+    verdict = "PASS" if rate >= 0.6 and details else "FAIL"
+    console.print(
+        f"{len(details)} viewer clips in range ({len(clips)} total): "
+        f"hit rate {rate:.0%} -> {verdict}"
+    )
+
+
 def main() -> None:  # pragma: no cover
     app()
 
