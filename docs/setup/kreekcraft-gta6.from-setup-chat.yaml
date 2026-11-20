@@ -1,0 +1,26 @@
+name: KreekCraft GTA 6 Clipping
+url: https://contentrewards.com/c/campaigns/2eaa14fb-6927-4136-897e-b096e0d907d6
+type: cpm
+rate_per_1k: 1.00
+cap_per_clip: 300.00   # page shows max payout $300 on all platforms (article said $400)
+budget_left: 6045      # $779 / $6,824 used, read 20 Nov 2026
+platforms: [tiktok, instagram, youtube_shorts]
+min_len_s: null        # not stated on campaign page (min payout per clip is $5.00)
+max_len_s: null        # not stated; check "Show more" / Notion approval-process page
+required_tags: ["#GTA6", "#KreekCraft", "#GrandTheftAutoVI"]
+required_overlay: "Official KreekCraft logo overlay visible for the ENTIRE clip (clips without it are rejected). Overlay asset linked in Reference materials (Notion/Drive)."
+required_caption: "Watch KreekCraft on YouTube and Twitch"
+paid_disclosure: not stated on this page (general Content Rewards rule: clear paid disclosure at start of clip)
+submit_deadline_min: 30   # general Content Rewards rule, not on this page
+same_day_stream_only: false  # not stated; rule is only KreekCraft's official GTA 6 livestreams and replays
+spoiler_rule: not stated
+no_ai_visuals: not stated (but: original edits only, no fake reactions/fabricated context/misleading titles)
+audience_geo: ">=40% of viewers from US, UK, CA or AU"
+notes: |
+  - Hook within first 1-2 seconds. Low-effort screen recordings prohibited.
+  - Engagement rate >= 0.8%; likes must stay publicly visible.
+  - Max 5 posts of the same/near-identical clip.
+  - Clips must stay public at least 30 days.
+  - New accounts must follow the warmup process; read approval process and Tier 1 audience-targeting guide before submitting.
+  - Source content: only KreekCraft's official GTA 6 streams/replays.
+  - Ahmad status: JOINED. Min payout per clip $5. 32 clippers, 721.9K approved views so far.
