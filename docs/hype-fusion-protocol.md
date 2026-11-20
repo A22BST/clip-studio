@@ -111,6 +111,23 @@ totals (disclosed). The audio and transcript detectors are untuned designs; one 
 printed the audio top-15 times on the 2:00-5:00 slice for timing only (no clip data was available
 to it).
 
-## 8. Results
+## 8. Slice selection (made after the freeze, before any ranking or scoring)
+
+`slices` output, aggregates only (565 viewer clips with a VOD offset in the whole VOD):
+
+| Block | Sum of views, top-10 clips | Clips with >=50 views |
+|---|---:|---:|
+| 0-3 h | 955 | 6 |
+| 3-6 h | 252 | 1 |
+| 6-9 h | 94 | 1 |
+| 9-11.6 h | 221 | 1 |
+
+Verdict slices by the rule: **0-3 h and 3-6 h**. Sanity slice: 2:00-5:00 (already prepared; overlaps both).
+Note for the reader: Day 2's clips are weak everywhere (only block 0-3 has more than one clip with
+>=50 views), so the >=50-view variant is usable on block 0-3 only.
+
+## 9. Results
+
+(appended after scoring)
 
 (appended after scoring)
