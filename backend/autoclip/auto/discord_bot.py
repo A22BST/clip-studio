@@ -25,7 +25,9 @@ from .store import Store
 log = logging.getLogger(__name__)
 
 
-def authorized(user_id: int | str | None, channel_id: int | str | None, owner: str, channel: str) -> bool:
+def authorized(
+    user_id: int | str | None, channel_id: int | str | None, owner: str, channel: str
+) -> bool:
     """Only the owner, only in the configured channel (or DMs are rejected)."""
     return (
         user_id is not None
@@ -77,7 +79,10 @@ def build_client(
 
     def ok(interaction: discord.Interaction) -> bool:
         allowed = authorized(
-            interaction.user.id if interaction.user else None, interaction.channel_id, owner_id, channel_id
+            interaction.user.id if interaction.user else None,
+            interaction.channel_id,
+            owner_id,
+            channel_id,
         )
         if not allowed:
             store.log_event("unauthorized_interaction", "discord")  # no ids or content stored
@@ -98,7 +103,9 @@ def build_client(
                 return await deny(interaction)
             if rerender is None:
                 store.set_clip_status(self.clip_id, "pending_approval")
-                return await interaction.response.send_message("Hook editing is not set up.", ephemeral=True)
+                return await interaction.response.send_message(
+                    "Hook editing is not set up.", ephemeral=True
+                )
             await interaction.response.defer(ephemeral=True, thinking=True)
             text = await asyncio.to_thread(
                 approval.apply_hook_edit, store, self.clip_id, str(self.hook), rerender
@@ -142,7 +149,9 @@ def build_client(
     async def status(interaction: discord.Interaction) -> None:
         if not ok(interaction):
             return await deny(interaction)
-        await interaction.response.send_message(approval.status_text(store, config)[:1900], ephemeral=True)
+        await interaction.response.send_message(
+            approval.status_text(store, config)[:1900], ephemeral=True
+        )
 
     @tasks.loop(seconds=60)
     async def cycle() -> None:

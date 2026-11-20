@@ -58,3 +58,34 @@ FAIL / not met:
   disk, but it is in the chat transcript, so reset it in the Twitch developer console. Keep it in the user env var `TWITCH_CLIENT_SECRET`.
 - Nothing was pushed to GitHub (commits are local on `main` of the A22BST/clip-studio fork).
 - Next (build session 2, not started): automation layer, plan section 5.
+
+## Build session 2 (2026-11-20): automation layer, branch `claude/automation-layer-3d84f1` (NOT merged into main)
+Package `backend/autoclip/auto/` (CLI `clip-auto`, or `python -m autoclip.auto.cli`). 154 tests in `tests/auto/` pass.
+Session 1's files were not edited; it is used only through `clip stream`, `report.json` and `highlights.json`.
+
+Built (what exists, tested with mocks):
+- 3a `watcher.py` (Twitch Helix: new VODs of campaigns that have a sidecar `campaigns/auto/<stem>.yaml`; 3 h slices; skips live
+  streamers, old VODs, duplicates; first run only baselines), `diskguard.py` (pause below 10 GB), `winsched.py` (4 Task Scheduler
+  tasks as XML: tick every 30 min, bot at logon, daily track, weekly report; **dry run unless `clip-auto install-tasks --apply`**, not installed).
+- 3b `select.py`: `claude -p "/clip <job>" --model sonnet`, headless note (no render, no shell), validated, one retry with the error.
+- 3c approval: `approval.py` + **Discord bot (default)** `discord_bot.py`/`discord_notify.py` (embed + Approve/Reject/Edit hook modal,
+  /pause /resume /status, owner + channel only, 9 MB preview ladder) and **Telegram bot as an alternative backend** (`config.chat`).
+- 3d `uploadpost.py` + `poster.py` (local queue, spread over config slots, `gate` before every upload, never resends after a request id),
+  `submit.py` (30-minute "submit now" reminders at +10/+20 min with a Submitted button), `tracker.py` (CSV `~/.autoclip/auto/tracker.csv`),
+  `publisher.py` (interface), `manual_platforms` (default `[tiktok]`: free Upload-Post plan has no TikTok, so TikTok is sent to the chat as file + text to post by hand).
+- 3e `learn.py`: weekly Sonnet job writes `~/.autoclip/auto/what_works.md` (read by the headless selection) and sends a report.
+- Safety: `gate.py` is the only authority to post (fails closed): not paused, approved by the owner, file hash unchanged since approval,
+  render report `exported`, not raw-cinematic, campaign live and under budget, rules re-checked, platforms allowed, daily cap, approval TTL.
+  Level 2 auto-approve is OFF and needs `level: 2` AND `auto_approve.enabled: true` in `~/.autoclip/auto/config.yaml`.
+
+Mocked: Twitch API, the clip pipeline subprocesses, `claude -p`, Upload-Post, Discord/Telegram HTTP. NOT verified live: Upload-Post
+response shapes (analytics nesting, delayed TikTok URLs), Discord gateway (never connected), real `claude -p` selection.
+- Content Rewards has NO public submission/views API (checked): submission stays a manual tap; the bot sends links + deadline.
+
+Needs Ahmad before a real end-to-end run:
+1. `claude` CLI is **not logged in** for headless use (`claude -p` says "Not logged in"): run `claude` once in a terminal and log in.
+2. Secrets as User env vars: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_OWNER_ID`, `UPLOAD_POST_API_KEY` (Twitch ones exist).
+3. Upload-Post: a paid plan for TikTok (until then TikTok is a hand-post), profile name (config default `crazyheist`).
+4. `campaigns/assets/kreekcraft-logo.png`; campaign end date, budget and submit link in `campaigns/auto/kreekcraft-gta6.yaml`.
+5. `uv pip install -e ".[auto]"` (discord.py, python-telegram-bot[job-queue]); then `clip-auto install-tasks --apply` once approved.
+6. Merge decision: branch is not merged; `pyproject.toml` gained the `auto` extra and `clip-auto` script.

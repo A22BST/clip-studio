@@ -48,8 +48,8 @@ def collect_stats(store: Store, now: datetime | None = None, days: int = 7) -> d
     by_status: dict[str, int] = {}
     for c in recent:
         by_status[c["status"]] = by_status.get(c["status"], 0) + 1
-    decided = by_status.get("approved", 0) + by_status.get("posted", 0) + by_status.get(
-        "rejected", 0
+    decided = (
+        by_status.get("approved", 0) + by_status.get("posted", 0) + by_status.get("rejected", 0)
     )
     approved = by_status.get("approved", 0) + by_status.get("posted", 0)
     rows = []
@@ -122,8 +122,11 @@ def run_weekly(
     )
     works, report = split_sections(result.text)
     if not report:
-        report = f"Weekly report: model returned no report (exit {result.returncode}). Raw stats: " + (
-            f"{stats['posted_total']} posted, {stats['total_views']} views, ~${stats['estimated_usd']}"
+        report = (
+            f"Weekly report: model returned no report (exit {result.returncode}). Raw stats: "
+            + (
+                f"{stats['posted_total']} posted, {stats['total_views']} views, ~${stats['estimated_usd']}"
+            )
         )
     if works:
         works_file.parent.mkdir(parents=True, exist_ok=True)

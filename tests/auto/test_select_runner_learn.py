@@ -95,7 +95,9 @@ def make_report(env, entries):
 
 
 def test_process_job_end_to_end_with_fakes(env, work):
-    jid = env.store.add_job(campaign_key="test-campaign", vod_id="9", url="https://twitch.tv/videos/9")
+    jid = env.store.add_job(
+        campaign_key="test-campaign", vod_id="9", url="https://twitch.tv/videos/9"
+    )
     job = env.store.claim_next_job()
     folder = paths.exports_dir() / JOB
     entry = lambda n, status, path="": dict(  # noqa: E731

@@ -160,7 +160,9 @@ def _evaluate(
         config.post.platforms
     )
     if not platforms or not set(platforms) <= allowed_platforms:
-        deny.append(f"platforms {platforms} not allowed (campaign/config: {sorted(allowed_platforms)})")
+        deny.append(
+            f"platforms {platforms} not allowed (campaign/config: {sorted(allowed_platforms)})"
+        )
 
     # -- rules engine again (cheap, deterministic) ------------------------------------
     duration = probe_duration(path)

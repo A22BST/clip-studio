@@ -7,7 +7,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from autoclip.auto import approval, discord_bot, discord_notify, gate, preview
 from autoclip.auto.notify import Button, NotifyError
 from autoclip.auto.store import StoreError
@@ -36,7 +35,9 @@ def test_send_video_shape(dsc, tmp_path):
     video = tmp_path / "c.mp4"
     video.write_bytes(b"x")
     n = discord_notify.DiscordNotifier(transport(seen))
-    mid = n.send_video(video, "Title line\nrest", [[Button("Approve", "a:1"), Button("Open", url="https://e.t")]])
+    mid = n.send_video(
+        video, "Title line\nrest", [[Button("Approve", "a:1"), Button("Open", url="https://e.t")]]
+    )
     req = seen[0]
     assert mid == 123456789012345678
     assert req.url.path == f"/api/v10/channels/{CHANNEL}/messages"
@@ -47,7 +48,9 @@ def test_send_video_shape(dsc, tmp_path):
 
 def test_send_text_components_and_no_mentions(dsc):
     seen: list[httpx.Request] = []
-    discord_notify.DiscordNotifier(transport(seen)).send_text("hi @everyone", [[Button("Submitted", "s:3")]])
+    discord_notify.DiscordNotifier(transport(seen)).send_text(
+        "hi @everyone", [[Button("Submitted", "s:3")]]
+    )
     payload = json.loads(seen[0].read())
     assert payload["allowed_mentions"] == {"parse": []}
     assert payload["components"][0]["components"][0]["custom_id"] == "s:3"
@@ -64,7 +67,9 @@ def test_notifier_cannot_choose_a_channel():
     import inspect
 
     for name in ("send_text", "send_video"):
-        assert "channel" not in str(inspect.signature(getattr(discord_notify.DiscordNotifier, name)))
+        assert "channel" not in str(
+            inspect.signature(getattr(discord_notify.DiscordNotifier, name))
+        )
 
 
 def test_authorization_is_owner_and_channel_only():
@@ -127,12 +132,22 @@ def test_preview_ladder_steps_down_until_it_fits(tmp_path):
         Path(target).write_bytes(b"y" * sizes[kbps])
 
     out = preview.make_preview(
-        original, "abc" * 10, profile="discord", limit_bytes=25, out_dir=tmp_path / "p", encoder=fake_encode
+        original,
+        "abc" * 10,
+        profile="discord",
+        limit_bytes=25,
+        out_dir=tmp_path / "p",
+        encoder=fake_encode,
     )
     assert calls == [1000, 700, 450] and out.stat().st_size == 20
     with pytest.raises(preview.PreviewError):
         preview.make_preview(
-            original, "def" * 10, profile="discord", limit_bytes=1, out_dir=tmp_path / "p2", encoder=fake_encode
+            original,
+            "def" * 10,
+            profile="discord",
+            limit_bytes=1,
+            out_dir=tmp_path / "p2",
+            encoder=fake_encode,
         )
 
 

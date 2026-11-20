@@ -7,11 +7,9 @@ import csv
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import httpx
 import pytest
-
 from autoclip import paths
 from autoclip.auto import discord_bot, diskguard, runner, tick, tracker, watcher
 from autoclip.auto.notify import RecordingNotifier
@@ -45,7 +43,10 @@ class FakePublisher:
     def post_analytics(self, request_id):
         from autoclip.auto.uploadpost import Metrics
 
-        return {p: Metrics(views=2500, likes=100, comments=5, shares=9) for p in ("tiktok", "youtube", "instagram")}
+        return {
+            p: Metrics(views=2500, likes=100, comments=5, shares=9)
+            for p in ("tiktok", "youtube", "instagram")
+        }
 
 
 def twitch_client(now):
@@ -99,7 +100,9 @@ def fake_pipeline(env):
                                               "score": 90}]}), encoding="utf-8")  # fmt: skip
         return out
 
-    return lambda store, config, job: runner.process_job(store, config, job, runner=run, select=select)
+    return lambda store, config, job: runner.process_job(
+        store, config, job, runner=run, select=select
+    )
 
 
 def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
@@ -144,7 +147,10 @@ def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
     # 4. /resume: it posts, the chat gets the URLs and the submit-now reminder
     env.store.set_paused(False, "test")
     tick.post_cycle(env.store, env.config, notifier, publisher, now=now, gate_kwargs=kw)
-    assert len(publisher.uploads) == 1, ([(p["status"], p["error"]) for p in env.store.list_posts()], [e["detail"] for e in env.store.events("gate_denied")])
+    assert len(publisher.uploads) == 1, (
+        [(p["status"], p["error"]) for p in env.store.list_posts()],
+        [e["detail"] for e in env.store.events("gate_denied")],
+    )
     assert sorted(publisher.uploads[0]["platforms"]) == ["instagram", "tiktok", "youtube"]
     final = env.store.get_post(post["id"])
     assert final["status"] == "posted" and final["results"]["tiktok"]["url"].startswith("https://")

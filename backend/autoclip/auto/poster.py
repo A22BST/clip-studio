@@ -257,7 +257,9 @@ def post_due(
         clip = store.get_clip(clip_id)
         auto = load_auto_campaign(clip["campaign_key"], campaigns_dir)
         request_id, results = post["request_id"], dict(post["results"])
-        api_platforms, manual = split_platforms(post["platforms"], config.upload_post.manual_platforms)
+        api_platforms, manual = split_platforms(
+            post["platforms"], config.upload_post.manual_platforms
+        )
         for platform in manual:
             results[platform] = {"url": MANUAL_URL, "success": True, "message": "post by hand"}
         if not api_platforms:

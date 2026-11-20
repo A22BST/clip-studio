@@ -31,7 +31,16 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
     monkeypatch.setenv("UPLOAD_POST_API_KEY", "fake-key")
     store = Store(tmp_path / "auto.db")
-    return type("Env", (), {"store": store, "tmp": tmp_path, "campaigns": camp, "config": AutoConfig(upload_post={"manual_platforms": []})})
+    return type(
+        "Env",
+        (),
+        {
+            "store": store,
+            "tmp": tmp_path,
+            "campaigns": camp,
+            "config": AutoConfig(upload_post={"manual_platforms": []}),
+        },
+    )
 
 
 @pytest.fixture
@@ -40,7 +49,10 @@ def make_clip(env):
 
     def _make(*, approve: bool = False, qa: int = 80, **overrides):
         job_id = env.store.add_job(
-            campaign_key="test-campaign", vod_id=f"v{len(env.store.list_jobs())}", start_s=0, end_s=0
+            campaign_key="test-campaign",
+            vod_id=f"v{len(env.store.list_jobs())}",
+            start_s=0,
+            end_s=0,
         )
         n = len(env.store.list_clips())
         path = env.tmp / f"clip{n}.mp4"

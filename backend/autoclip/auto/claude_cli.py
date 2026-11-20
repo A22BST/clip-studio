@@ -26,7 +26,10 @@ def find_claude() -> str:
     found = shutil.which("claude")
     if found:
         return found
-    for candidate in (Path.home() / ".local" / "bin" / "claude.exe", Path.home() / ".local" / "bin" / "claude"):
+    for candidate in (
+        Path.home() / ".local" / "bin" / "claude.exe",
+        Path.home() / ".local" / "bin" / "claude",
+    ):
         if candidate.exists():
             return str(candidate)
     raise ClaudeCliError("The `claude` CLI was not found (expected ~/.local/bin/claude.exe).")

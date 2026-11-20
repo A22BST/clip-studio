@@ -100,7 +100,9 @@ def process_job(
         message = f"{type(exc).__name__}: {exc}"[:800]
         retry = job["attempts"] < MAX_ATTEMPTS
         store.update_job(job_id, state="queued" if retry else "failed", last_error=message)
-        store.log_event("job_error", f"job {job_id} ({'will retry' if retry else 'gave up'}): {message[:300]}")
+        store.log_event(
+            "job_error", f"job {job_id} ({'will retry' if retry else 'gave up'}): {message[:300]}"
+        )
         return 0
 
 
@@ -183,7 +185,11 @@ def cleanup_sources(store: Store, config: AutoConfig) -> int:
 
 
 def rerender_clip(
-    store: Store, clip: dict[str, Any], new_hook: str, *, runner: Callable[..., Any] = subprocess.run
+    store: Store,
+    clip: dict[str, Any],
+    new_hook: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
 ) -> Path | None:
     """Edit-hook support: re-render ONE clip with a new hook. Returns the new file or None.
 

@@ -52,9 +52,7 @@ def validate_highlights(job_id: str) -> int:
     cand = json.loads((work / "candidates.json").read_text(encoding="utf-8"))
     ranges = [(c["first_word"], c["last_word"]) for c in cand["candidates"]]
     for position, (clip, _meta) in enumerate(picks, start=1):
-        inside = any(
-            lo <= clip.start_word_index and clip.end_word_index <= hi for lo, hi in ranges
-        )
+        inside = any(lo <= clip.start_word_index and clip.end_word_index <= hi for lo, hi in ranges)
         if clip.end_word_index <= clip.start_word_index or not inside:
             raise SelectionError(
                 f"clips[{position}] word range {clip.start_word_index}-{clip.end_word_index} is "
