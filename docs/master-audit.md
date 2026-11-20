@@ -24,7 +24,7 @@ Checked by the project master session against the files, not the reports. "Verif
 2. **Upload-Post Basic** not paid, `UPLOAD_POST_API_KEY` not set. Accounts not connected to Upload-Post yet.
 3. **`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`** not set.
 4. **`claude` CLI not logged in for headless use** (`claude -p` said "Not logged in" in session 2). Ahmad runs `claude` once.
-5. **Automation not merged into `main`** and never run live (no real Upload-Post call, no real Telegram message).
+5. **Automation merged into `main` (20 Nov, `cdd8656`) but never run live (no real Upload-Post call, no real Telegram message).
 6. **Automation config does not match the decisions yet.** Code defaults: Discord approval chat, level 1 (human tap), TikTok as
    hand-post. Decided: Telegram ping only, no approval, all three platforms via Upload-Post. Needed in
    `~/.autoclip/auto/config.yaml`: `chat: telegram`, `level: 2`, `auto_approve.enabled: true`, `manual_platforms: []`
@@ -34,14 +34,14 @@ Checked by the project master session against the files, not the reports. "Verif
 
 ## Open (waiting on Ahmad or another session)
 - Ahmad: yes/no to download the overlay (money/accounts rule: downloads need his yes).
-- Ahmad: pay Upload-Post Basic, connect TikTok `crazy_heist`*, Instagram `crazy.heist`, YouTube `@crazy_heist`, save the API key.
+- Ahmad: pay Upload-Post Basic, connect TikTok `crazy_heist`, Instagram `crazy.heist`, YouTube `@crazy_heist`, save the API key.
 - Ahmad: Telegram bot via BotFather, save token + chat id (clipboard method).
-- Ahmad: log in the `claude` CLI once; OK to merge the automation branch into `main`; OK to push `main` to GitHub.
+- Ahmad: log in the `claude` CLI once. (Merge + push approved and done 20 Nov.)
 - Ahmad: Whop payout account (bank) - setup-status says details entered by him, not verified.
 - Ahmad: reset the Twitch Client Secret (it was pasted into a chat earlier; STATUS.md flags it).
 - Fused hype session (`local_e8444453`): Day 2 audio + transcript test still running; its files are untracked on `main`.
 - Archive the finished sessions (hype calibration, hype research): Ahmad's OK.
-- *Handle mismatch: `docs/setup/setup-status.md` says TikTok is `crazy_heist`, the handover says `crazy.heist`. Ahmad confirms.
+- TikTok handle confirmed by Ahmad: `crazy_heist` (underscore). Instagram `crazy.heist`, YouTube `@crazy_heist`.
 
 ## Could be better
 **Clip quality**
@@ -72,7 +72,7 @@ Checked by the project master session against the files, not the reports. "Verif
 **Ops**
 - Disk: **24 GB free** (not 41). A 3 h slice is about 4.2 GB, the guard pauses below 10 GB: keep one slice at a time and delete sources.
 - The laptop must be on; nothing runs while it sleeps.
-- `main` is 8 commits ahead of GitHub, not pushed: one disk failure loses the work.
 
 ## Test run (20 Nov, this session)
-See `docs/master-plan.md` step 0 for the result; filled in below when the run finished.
+- `main` before merge: 547 passed, 24 skipped. Automation branch: 656 passed, 24 skipped.
+- After merging the automation branch into `main` (Ahmad approved): **757 passed, 24 skipped**. `main` pushed to GitHub (`cdd8656`).
