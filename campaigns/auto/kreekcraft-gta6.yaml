@@ -1,0 +1,7 @@
+# Automation sidecar for campaigns/kreekcraft-gta6.yaml (see backend/autoclip/auto/campaign_meta.py).
+streamers: [kreekcraft]
+platform: twitch
+active: true
+# ends_at: 2026-12-31     # set when the campaign page shows an end date
+# budget_usd: 400         # campaign cap ($300-400); stops posting when estimated earnings reach it
+submit_url: ""            # Ahmad: paste the campaign's Content Rewards submission link
