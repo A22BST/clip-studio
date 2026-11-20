@@ -28,10 +28,10 @@ def _camera_rect(face: FaceObservation, width: int, height: int) -> Rect:
     )
 
 
-#: Corner crops (fraction of frame width, height) tried in order. Facecams are small and sit in
-#: a corner, and MediaPipe's face model shrinks its input to ~192 px: scanning the whole 720p
-#: frame turns a 120 px webcam face into ~18 px and finds nothing. Cropping the corners first
-#: keeps such faces detectable.
+#: Edge crops (fraction of frame width, height) tried in order. Facecams are small and sit against
+#: the left or right edge (corner or mid-height), and MediaPipe's face model shrinks its input to
+#: ~192 px: scanning the whole 720p frame turns a 120 px webcam face into ~18 px and finds nothing.
+#: Cropping the edge strips (top / middle / bottom, both sides) keeps such faces detectable.
 _CORNER_SCALES = ((0.30, 0.40), (0.42, 0.52))
 
 
@@ -67,11 +67,11 @@ def _corner_faces(source: Path, times: list[float], width: int, height: int):
                     continue
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 for left in (True, False):
-                    for top in (True, False):
+                    for vertical in (0.0, 0.5, 1.0):  # top, middle, bottom of the edge
                         for fw, fh in _CORNER_SCALES:
                             cw, ch = round(width * fw), round(height * fh)
                             x0 = 0 if left else width - cw
-                            y0 = 0 if top else height - ch
+                            y0 = round((height - ch) * vertical)
                             crop = np.ascontiguousarray(rgb[y0 : y0 + ch, x0 : x0 + cw])
                             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=crop)
                             found = False
@@ -141,10 +141,8 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
                 0,
                 0,
             )
-            in_corner_x = typical.cx < width * 0.45 or typical.cx > width * 0.55
-            in_corner_y = typical.cy < height * 0.45 or typical.cy > height * 0.55
-            if not (in_corner_x and in_corner_y):
-                continue
+            if not (typical.cx < width * 0.45 or typical.cx > width * 0.55):
+                continue  # an overlay hugs the left or right edge; centred faces are the subject
             rect = _camera_rect(typical, width, height)
             if rect.w * rect.h >= width * height * 0.45:
                 continue

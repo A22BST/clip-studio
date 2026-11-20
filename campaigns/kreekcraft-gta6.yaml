@@ -1,16 +1,19 @@
-# KreekCraft GTA 6 Clipping (Content Rewards). Summary of the public rules as relayed on
-# 2026-11-20; the campaign page is the source of truth. Min/max length, spoiler and
-# paid-disclosure wording are NOT on the page, so those values are conservative defaults.
+# KreekCraft GTA 6 Clipping (Content Rewards). Rules read on 2026-11-20 from the campaign page,
+# its Notion "Full Rules Brief" and Drive folder; the campaign page is the source of truth.
+# The campaign states NO min/max length, NO disclosure wording and NO spoiler rule. The 20-60 s
+# range is a safe choice (his own auto clips are 9-37 s). Paid disclosure and the 30-minute submit
+# rule come only from Content Rewards' general guide, so they are kept as conservative defaults.
 name: KreekCraft GTA 6 Clipping
 type: cpm
 platforms: [tiktok, instagram, youtube]
 rate_per_1k_usd: 1.0
-min_duration_s: 15
+min_duration_s: 20
 max_duration_s: 60
 required_hashtags: [GTA6, KreekCraft, GrandTheftAutoVI]
 required_caption_phrases: ["Watch KreekCraft on YouTube and Twitch"]
-# Logo must be visible for the ENTIRE clip. Put the official asset (from the campaign's
-# reference materials) at campaigns/assets/kreekcraft-logo.png. Until it exists every
+# Logo must be visible for the ENTIRE clip (start to finish). Official asset: the "KreekCraft
+# Overlay" file in the campaign's Drive folder (a 636 kB file; Ahmad downloads or approves it).
+# Put it at campaigns/assets/kreekcraft-logo.png. Until it exists every
 # clip is BLOCKED by the rules check - that is intentional.
 required_overlay: kreekcraft-logo.png
 disclosure_required: true
@@ -26,5 +29,6 @@ min_engagement_pct: 0.8
 max_similar_posts: 5
 banned_topics: [leaked footage]
 notes: >
-  Only KreekCraft's official GTA 6 streams/replays. Original edits only. Hook in the first
+  $1 CPM, $300 max per clip. Only KreekCraft's official GTA 6 streams/replays (YouTube or Twitch). No
+  fabricated context, fake reactions or misleading titles. Original edits only. Hook in the first
   1-2 s. Clips must stay public 30 days. Engagement >= 0.8% with likes public.
