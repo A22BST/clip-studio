@@ -113,3 +113,27 @@ class RecordingNotifier:
         self.videos.append((Path(path), caption, buttons))
         self._next_id += 1
         return self._next_id
+
+
+class CompositeNotifier:
+    """Primary chat (approvals, previews, hand-posts) plus a one-way text ping.
+
+    Text messages also go to ``ping`` WITHOUT buttons (it has no callbacks). Videos and previews go
+    to the primary only. A failing ping never breaks the primary send or the pipeline.
+    """
+
+    def __init__(self, primary: Notifier, ping: Notifier) -> None:
+        self.primary, self.ping = primary, ping
+        self.max_upload_bytes = getattr(primary, "max_upload_bytes", 45 * 1024 * 1024)
+        self.preview_profile = getattr(primary, "preview_profile", "telegram")
+
+    def send_text(self, text: str, buttons: Buttons | None = None) -> int | None:
+        result = self.primary.send_text(text, buttons)
+        try:
+            self.ping.send_text(text)
+        except Exception:  # noqa: BLE001 - the ping is best effort
+            pass
+        return result
+
+    def send_video(self, path: Path, caption: str, buttons: Buttons | None = None) -> int | None:
+        return self.primary.send_video(path, caption, buttons)

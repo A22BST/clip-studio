@@ -130,7 +130,7 @@ def test_happy_path_real_http_client(env, make_clip):
     )
     text, buttons = notifier.texts[-1]
     assert "https://post.test/happy" in text
-    assert "Posted. SUBMIT TO THE CAMPAIGN NOW: deadline" in text
+    assert "submit to Content Rewards now (30 min)" in text
     assert "(30 min)" in text
     assert buttons[0][0].url == "https://example.test/submit"
     assert buttons[1][0].callback_data == f"s:{pid}"

@@ -133,13 +133,18 @@ def _poll(client, request_id, results, platforms, sleep):
 
 def _announce(notifier, post, auto):
     deadline = parse_iso(post["submit_deadline"])
-    links = [
-        f"{p}: {r.get('url') or r.get('message') or 'URL pending'}"
-        for p, r in post["results"].items()
-    ]
-    text = "Posted. SUBMIT TO THE CAMPAIGN NOW: deadline "
-    text += f"{deadline:%H:%M} ({auto.campaign.submit_deadline_min} min) UTC"
-    notifier.send_text(text + "\n" + "\n".join(links), _buttons(post["id"], auto))
+    for platform, result in post["results"].items():
+        url = result.get("url") or result.get("message") or "URL pending"
+        text = chr(10).join(
+            [
+                f"\u2705 Posted on {platform} \u2014 submit to Content Rewards now "
+                f"({auto.campaign.submit_deadline_min} min)",
+                f"Campaign: {auto.campaign.name}",
+                f"Deadline: {deadline:%H:%M} UTC",
+                url,
+            ]
+        )
+        notifier.send_text(text, _buttons(post["id"], auto))
 
 
 def _retire_clip(store: Store, clip_id: int, status: str) -> None:

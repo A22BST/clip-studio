@@ -159,7 +159,7 @@ def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
     assert len(publisher.uploads) == 3, ([(p["status"], p["error"]) for p in env.store.list_posts()], reasons)
     assert sorted(u["platforms"][0] for u in publisher.uploads) == ["instagram", "tiktok", "youtube"]
     assert {p["status"] for p in env.store.list_posts()} == {"posted"}
-    text = [t for t, _ in notifier.texts if "SUBMIT TO THE CAMPAIGN NOW" in t]
+    text = [t for t, _ in notifier.texts if "submit to Content Rewards now" in t]
     assert len(text) == 3 and any("youtube.test/clip1" in t for t in text)
     assert env.store.get_clip(cid)["status"] == "posted"
     submit_rows = list(csv.DictReader(open(submit_log.csv_path(), encoding="utf-8")))

@@ -114,3 +114,10 @@ Opus review result (before these additions): no path posted without rules + appr
   button approves the newest version after a hook edit; a dismissed Discord edit modal leaves the clip in `editing`; httpx INFO logging could show the Telegram
   token URL if logging is ever raised to INFO; the hand-post message includes the local file path.
 - Bug found by the new end-to-end test and fixed: with one post row per platform the gate rejected the 2nd and 3rd platform after the 1st marked the clip `posted`.
+
+### Telegram ping (added later)
+One-way Telegram ping is ON whenever `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, in addition to the approval chat (Discord by default):
+`CompositeNotifier` sends every text message (without buttons) to Telegram, never videos or previews. After each post: "Posted on <platform> -
+submit to Content Rewards now (30 min)", campaign, deadline, URL on its own line; reminders at +10 and +20 min until submitted; throttle, pause and
+removal notices. Telegram commands (`/pause /resume /status /submitted <url>`, only from `TELEGRAM_CHAT_ID`) work when the Telegram bot runs, i.e. with
+`chat: telegram`; in Discord mode the Telegram side is send-only and `/submitted` is done with the Submitted button or by the Discord bot.

@@ -16,25 +16,29 @@ console = Console()
 
 
 def _notifier(config=None):
-    """The configured chat backend (Discord by default); messages are dropped if its secrets are unset."""
-    from .notify import RecordingNotifier
+    """Approval chat (Discord by default) + a one-way Telegram ping when its secrets are set."""
+    from .notify import CompositeNotifier, RecordingNotifier, TelegramNotifier
 
     config = config or load_config()
+    telegram_ready = secrets.secret_is_set(secrets.TELEGRAM_BOT_TOKEN) and secrets.secret_is_set(
+        secrets.TELEGRAM_CHAT_ID
+    )
+    primary = None
     if config.chat == "discord":
         if secrets.secret_is_set(secrets.DISCORD_BOT_TOKEN) and secrets.secret_is_set(
             secrets.DISCORD_CHANNEL_ID
         ):
             from .discord_notify import DiscordNotifier
 
-            return DiscordNotifier()
-    elif secrets.secret_is_set(secrets.TELEGRAM_BOT_TOKEN) and secrets.secret_is_set(
-        secrets.TELEGRAM_CHAT_ID
-    ):
-        from .notify import TelegramNotifier
-
-        return TelegramNotifier()
-    console.print(f"[yellow]{config.chat} secrets not set: messages are dropped.[/yellow]")
-    return RecordingNotifier()
+            primary = DiscordNotifier()
+    elif telegram_ready:
+        return TelegramNotifier()  # Telegram is already the approval chat
+    if primary is None:
+        if telegram_ready:
+            return TelegramNotifier()  # only Telegram is configured: use it for everything
+        console.print(f"[yellow]{config.chat} secrets not set: messages are dropped.[/yellow]")
+        return RecordingNotifier()
+    return CompositeNotifier(primary, TelegramNotifier()) if telegram_ready else primary
 
 
 def _client(config):
@@ -109,6 +113,10 @@ def track() -> None:
 
     for platform in throttle.evaluate(store, config):
         console.print(f"[yellow]Throttled {platform}: paused 48 h, cap halved.[/yellow]")
+        _notifier(config).send_text(
+            f"Auto-throttle: {platform} paused for 48 h and its daily cap halved "
+            "(its last 3 posts average under 20% of the 7-day average)."
+        )
     console.print(f"Tracker: {config.tracker_csv()}")
 
 
@@ -149,6 +157,7 @@ def report_removal(platform: str, reason: str = "removed / strike / copyright cl
     from . import throttle
 
     throttle.report_removal(Store(), platform, reason)
+    _notifier().send_text(f"EVERYTHING PAUSED: {platform} reported a removal/strike ({reason}). Run `clip-auto resume` after checking.")
     console.print("Everything is paused. Run `clip-auto resume` after you have looked at it.")
 
 
@@ -156,6 +165,7 @@ def report_removal(platform: str, reason: str = "removed / strike / copyright cl
 def pause() -> None:
     """Kill switch (same as /pause in Telegram)."""
     Store().set_paused(True, "cli")
+    _notifier().send_text("Paused from the command line: nothing posts until `clip-auto resume`.")
     console.print("Paused: nothing will post and no new jobs start.")
 
 

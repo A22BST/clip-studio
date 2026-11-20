@@ -457,6 +457,15 @@ class Store:
             )
         self.log_event("submitted", f"post {post_id}")
 
+    def mark_submitted_url(self, url: str) -> int | None:
+        """Mark the post that owns this URL as submitted. Returns its id (None if unknown)."""
+        wanted = url.strip()
+        for post in self.list_posts("posted"):
+            if any(r.get("url") == wanted for r in post["results"].values()):
+                self.mark_submitted(post["id"])
+                return post["id"]
+        return None
+
     def bump_reminders(self, post_id: int) -> None:
         with self._conn() as con:
             con.execute("UPDATE posts SET reminders_sent=reminders_sent+1 WHERE id=?", (post_id,))

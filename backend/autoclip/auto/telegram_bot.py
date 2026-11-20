@@ -76,11 +76,19 @@ def build_application(
             text = "Resumed."
         elif name == "/status":
             text = status_text(store, config)
+        elif name == "/submitted":
+            parts = update.effective_message.text.split(maxsplit=1)
+            post_id = store.mark_submitted_url(parts[1]) if len(parts) > 1 else None
+            text = (
+                f"Logged post {post_id} as submitted."
+                if post_id
+                else "Usage: /submitted <post URL> (no posted clip has that URL)"
+            )
         elif name == "/previews":
             count = await run_sync(send_pending_previews, store, notifier, config)
             text = f"Sent {count} previews."
         else:
-            text = "Commands: /help /pause /resume /status /previews"
+            text = "Commands: /help /pause /resume /status /previews /submitted <url>"
         await update.effective_message.reply_text(text)
 
     async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -159,7 +167,7 @@ def build_application(
             except Exception as exc:
                 store.log_event("telegram_job_failed", type(exc).__name__)
 
-    for name in ("start", "help", "pause", "resume", "status", "previews"):
+    for name in ("start", "help", "pause", "resume", "status", "previews", "submitted"):
         application.add_handler(CommandHandler(name, command))
     application.add_handler(CallbackQueryHandler(callback, pattern=r"^[ares]:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
