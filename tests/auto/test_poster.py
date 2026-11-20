@@ -394,3 +394,34 @@ def test_buttons_omit_empty_campaign_url(env, make_clip):
     notifier = RecordingNotifier()
     run(env, notifier, FakeClient(), now)
     assert notifier.texts[-1][1] == [[Button("Submitted", callback_data=f"s:{pid}")]]
+
+
+def test_manual_platform_is_not_uploaded_and_sent_by_hand(env, make_clip):
+    """Free Upload-Post plan: no TikTok. YouTube posts by API, TikTok goes to chat as file + text."""
+    env.config.upload_post.manual_platforms = ["tiktok"]
+    clip_id = make_clip(approve=True)
+    now = datetime.now(UTC)
+    env.store.enqueue_post(clip_id, now - timedelta(minutes=1), ["tiktok", "youtube"])
+    client, notifier = FakeClient(), RecordingNotifier()
+    client.status = lambda rid: {
+        "status": "completed",
+        "results": [{"platform": "youtube", "success": True, "post_url": "https://yt.test/1"}],
+    }
+    run(env, notifier, client, now)
+    assert client.uploads[0]["platforms"] == ["youtube"]  # TikTok never reaches the API
+    post = env.store.list_posts("posted")[0]
+    assert post["results"]["youtube"]["url"] == "https://yt.test/1"
+    assert post["results"]["tiktok"]["message"] == "post by hand"
+    hand = [v for v in notifier.videos if "POST BY HAND on tiktok" in v[1]]
+    assert hand and "Insane moment" in hand[0][1] and "#GTA6" in hand[0][1]
+
+
+def test_only_manual_platforms_makes_no_api_call(env, make_clip):
+    env.config.upload_post.manual_platforms = ["tiktok"]
+    clip_id = make_clip(approve=True)
+    now = datetime.now(UTC)
+    env.store.enqueue_post(clip_id, now - timedelta(minutes=1), ["tiktok"])
+    client, notifier = FakeClient(), RecordingNotifier()
+    run(env, notifier, client, now)
+    assert client.uploads == [] and client.polls == 0
+    assert env.store.list_posts("posted") and any("POST BY HAND" in v[1] for v in notifier.videos)

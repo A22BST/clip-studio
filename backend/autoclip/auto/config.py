@@ -60,6 +60,9 @@ class UploadPostConfig(_Section):
     tiktok_privacy: str = "PUBLIC_TO_EVERYONE"
     tiktok_post_mode: str = "DIRECT_POST"  # MEDIA_UPLOAD would only create drafts
     youtube_privacy: str = "public"
+    #: Platforms the Upload-Post plan cannot post (the free tier has no TikTok). They are not
+    #: uploaded: the chat gets the file + caption to post by hand. Clear this after upgrading.
+    manual_platforms: list[str] = ["tiktok"]
 
 
 class WatchConfig(_Section):

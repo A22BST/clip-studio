@@ -15,6 +15,8 @@ from . import gate
 from .campaign_meta import load_auto_campaign
 from .config import AutoConfig
 from .notify import Button, Notifier
+from .preview import make_preview
+from .publisher import MANUAL_URL, split_platforms
 from .store import Store, parse_iso
 from .uploadpost import UploadPostClient, UploadPostError
 
@@ -159,6 +161,30 @@ def _announce(notifier, post, auto):
     notifier.send_text(text + "\n" + "\n".join(links), _buttons(post["id"], auto))
 
 
+def _send_hand_post(notifier, clip, manual, auto) -> None:
+    """The platforms the API cannot post: send the file + caption so Ahmad can post by hand."""
+    tags = " ".join("#" + h.lstrip("#") for h in clip["hashtags"])
+    caption = chr(10).join(
+        [
+            f"POST BY HAND on {', '.join(manual)}: upload this clip and use this text.",
+            clip["caption"],
+            tags,
+            f"Full-quality file: {clip['path']}",
+        ]
+    )
+    limit = getattr(notifier, "max_upload_bytes", 45 * 1024 * 1024)
+    try:
+        shown = make_preview(
+            Path(clip["path"]),
+            clip["approved_sha256"] or "x" * 16,
+            profile=getattr(notifier, "preview_profile", "telegram"),
+            limit_bytes=limit,
+        )
+        notifier.send_video(shown, caption)
+    except Exception:
+        notifier.send_text(caption)
+
+
 def refresh_urls(store: Store, client: UploadPostClient, notifier: Notifier) -> None:
     for post in store.list_posts("posted"):
         if not post["request_id"] or _complete(post["results"], post["platforms"]):
@@ -231,11 +257,16 @@ def post_due(
         clip = store.get_clip(clip_id)
         auto = load_auto_campaign(clip["campaign_key"], campaigns_dir)
         request_id, results = post["request_id"], dict(post["results"])
-        if not recovering:
+        api_platforms, manual = split_platforms(post["platforms"], config.upload_post.manual_platforms)
+        for platform in manual:
+            results[platform] = {"url": MANUAL_URL, "success": True, "message": "post by hand"}
+        if not api_platforms:
+            request_id = request_id or f"manual-{post_id}"
+        elif not recovering:
             try:
                 upload = client.upload(
                     video_path=clip["path"],
-                    platforms=post["platforms"],
+                    platforms=api_platforms,
                     title=clip["title"],
                     caption=clip["caption"],
                     hashtags=clip["hashtags"],
@@ -243,7 +274,7 @@ def post_due(
                     idempotency_key=f"clip-{clip_id}-post-{post_id}",
                 )
                 request_id = upload.request_id
-                _merge(results, upload.immediate_results, post["platforms"])
+                _merge(results, upload.immediate_results, api_platforms)
             except UploadPostError as exc:
                 request_id = exc.request_id
                 if not request_id:
@@ -255,8 +286,9 @@ def post_due(
                         notifier.send_text(f"Post {post_id} failed: {exc}")
                     continue
             _save_request(store, post_id, request_id, results)
-        _poll(client, request_id, results, post["platforms"], sleep)
-        for platform in post["platforms"]:
+        if api_platforms:
+            _poll(client, request_id, results, api_platforms, sleep)
+        for platform in api_platforms:
             results.setdefault(platform, {"url": "", "success": None, "message": "URL pending"})
         store.finish_post(
             post_id,
@@ -266,5 +298,7 @@ def post_due(
             submit_deadline=now + timedelta(minutes=auto.campaign.submit_deadline_min),
         )
         _announce(notifier, store.get_post(post_id), auto)
+        if manual:
+            _send_hand_post(notifier, clip, manual, auto)
         finished.append(post_id)
     return finished

@@ -31,7 +31,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
     monkeypatch.setenv("UPLOAD_POST_API_KEY", "fake-key")
     store = Store(tmp_path / "auto.db")
-    return type("Env", (), {"store": store, "tmp": tmp_path, "campaigns": camp, "config": AutoConfig()})
+    return type("Env", (), {"store": store, "tmp": tmp_path, "campaigns": camp, "config": AutoConfig(upload_post={"manual_platforms": []})})
 
 
 @pytest.fixture
