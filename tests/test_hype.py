@@ -34,7 +34,7 @@ def _burst(t: float, *, n: int = 40, text: str = "KEKW") -> list[ChatMessage]:
 def test_delayed_burst_keeps_event_context_and_samples() -> None:
     chat = ChatLog(_background() + _burst(600))
     peaks = compute_hype(chat)
-    assert peaks[0].t == 602.5
+    assert peaks[0].t == 605.0  # 10 s bins: centre of 600-610
     assert peaks[0].window_start <= 580
     assert peaks[0].window_end >= 610
     assert "KEKW x40" in peaks[0].reasons
@@ -155,11 +155,11 @@ def test_loudness_and_viewer_clips_change_ranking() -> None:
     chat = ChatLog(_burst(600) + _burst(800))
     config = HypeConfig(w_rate=0, w_unique=0)
     plain = compute_hype(chat, config=config)
-    assert plain[0].t == 602.5
+    assert plain[0].t == 605.0
     audio = [(float(t), -10.0 if t == 800 else -40.0) for t in range(0, 1000, 5)]
     loud = compute_hype(chat, loudness=audio, config=config)
     clipped = compute_hype(chat, viewer_clips=[802.5], config=config)
-    assert loud[0].t == clipped[0].t == 802.5
+    assert loud[0].t == clipped[0].t == 805.0
     assert loud[0].score > plain[0].score
     assert clipped[0].score > plain[0].score
     assert any("loud +" in reason for reason in loud[0].reasons)
@@ -169,7 +169,7 @@ def test_loudness_and_viewer_clips_change_ranking() -> None:
 def test_optional_signals_work_without_chat_and_ignore_invalid_samples() -> None:
     audio = [(float(t), -40.0) for t in range(0, 600, 5)] + [(600, -10)]
     peaks = compute_hype(ChatLog(), loudness=audio)
-    assert peaks[0].t == 602.5
+    assert peaks[0].t == 605.0  # 10 s bins: centre of 600-610
     assert compute_hype(ChatLog(), viewer_clips=[600])
     assert (
         compute_hype(

@@ -37,6 +37,13 @@ HYPE_PHRASES: dict[str, tuple[str, float]] = {
     "WTF": (r"wtf", 1.2),
     "HOLY": (r"holy", 1.0),
     "BRO": (r"bro", 0.5),
+    # Added from KreekCraft calibration chat (calibration slices only): tokens over-represented
+    # near viewer-made clips. Generic reaction words, not stream-specific jokes.
+    "YOOO": (r"yo{3,}", 1.2),
+    "!clip": (r"!clip", 2.0),
+    "NotLikeThis": (r"notlikethis", 1.0),
+    "crashout": (r"kreekcrashout", 1.0),
+    "swear": (r"fuck\w*|shit\w*", 0.8),
 }
 _LABELS = list(HYPE_PHRASES)
 _HYPE_RE = re.compile(
@@ -49,9 +56,18 @@ _HYPE_RE = re.compile(
 
 @dataclass
 class HypeConfig:
-    """Keep timing and signal weights editable for different chat communities."""
+    """Keep timing and signal weights editable for different chat communities.
 
-    bin_s: float = 5.0
+    Defaults come from calibration on KreekCraft's GTA 6 streams (VOD 2932147800, chat 0.4-0.8
+    msg/s) against viewer-made Twitch clips; see STATUS.md and scripts/hype_tune.py. Two changes
+    survived on both halves of a calibration/held-out slice split: 10 s bins (5 s bins hold ~3
+    messages, mostly Poisson noise) and a heavier emote weight (0.8 -> 2.0). A 15 min baseline
+    and window/gap sizes fitted the calibration slices but made held-out slices worse, so they
+    stay at their original values. Chat-only hype tops out around 30% view-weighted hit share
+    on held-out hours (chance ~22%), well short of the 60% bar.
+    """
+
+    bin_s: float = 10.0
     rolling_window_s: float = 300.0
     pre_s: float = 30.0
     post_s: float = 10.0
@@ -62,10 +78,17 @@ class HypeConfig:
     top_n: int = 15
     min_z: float = 1.5
     w_rate: float = 1.0
-    w_emote: float = 0.8
+    w_emote: float = 2.0
     w_unique: float = 0.5
     w_loud: float = 0.4
     w_viewer_clip: float = 1.0
+    #: Participation gate: distinct named users needed in a bin, the largest share one user may
+    #: send, and how many messages per user/bin still count toward the rate.
+    min_users: int = 3
+    max_user_share: float = 0.5
+    user_cap: int = 3
+    #: Per-user emote weight cap inside one bin (a spammer cannot dominate).
+    emote_cap: float = 3.0
 
     def __post_init__(self) -> None:
         for name in ("bin_s", "rolling_window_s"):
@@ -83,12 +106,18 @@ class HypeConfig:
             "w_unique",
             "w_loud",
             "w_viewer_clip",
+            "max_user_share",
+            "emote_cap",
         ):
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
         if not isinstance(self.top_n, int) or self.top_n < 0:
             raise ValueError("top_n must be a nonnegative integer")
+        for name in ("min_users", "user_cap"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
 
 
 @dataclass
@@ -197,7 +226,7 @@ def compute_hype(
         bucket.emote_users[user] += weight
 
     window = max(1, math.ceil(cfg.rolling_window_s / cfg.bin_s))
-    rates = [float(sum(min(n, 3) for n in b.users.values())) for b in bins]
+    rates = [float(sum(min(n, cfg.user_cap) for n in b.users.values())) for b in bins]
     rate_z, rate_mean = _baseline(rates, window, floor=1.0, poisson=True)
     unique_z, _ = _baseline([float(len(b.users)) for b in bins], window, floor=1.0, poisson=True)
     audio_bins: dict[int, list[float]] = {}
@@ -224,9 +253,12 @@ def compute_hype(
     clip_count = 0
     for i, bucket in enumerate(bins):
         collective = (
-            len(bucket.users) >= 3 and max(bucket.users.values()) <= bucket.users.total() / 2
+            len(bucket.users) >= cfg.min_users
+            and max(bucket.users.values()) <= bucket.users.total() * cfg.max_user_share
         )
-        emote = sum(min(n, 3.0) for n in bucket.emote_users.values()) / math.sqrt(max(rates[i], 4))
+        emote = sum(min(n, cfg.emote_cap) for n in bucket.emote_users.values()) / math.sqrt(
+            max(rates[i], 4)
+        )
         clip_count += clip_delta[i]
         score = (
             (cfg.w_rate * rate_z[i] + cfg.w_unique * unique_z[i] + cfg.w_emote * emote) * collective
