@@ -80,7 +80,8 @@ gpu = [
   "nvidia-cudnn-cu12>=9.1; platform_system != 'Darwin'",
 ]
 auto = [
-  "python-telegram-bot>=22",
+  "discord.py>=2.4",
+  "python-telegram-bot[job-queue]>=22",
 ]
 dev = [
   "pytest>=8.3",

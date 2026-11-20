@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from autoclip import paths
 from autoclip.auto import learn, runner, select
 from autoclip.auto.notify import RecordingNotifier

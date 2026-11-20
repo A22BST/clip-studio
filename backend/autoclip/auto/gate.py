@@ -7,7 +7,8 @@ the Upload-Post client.
 A post is allowed only when ALL of these hold:
 
 1. the kill switch (``/pause``) is off;
-2. the clip is ``approved`` by the human in ``TELEGRAM_CHAT_ID`` (``telegram:<id>``), or - only
+2. the clip is ``approved`` by the human (``discord:<DISCORD_OWNER_ID>`` or
+   ``telegram:<TELEGRAM_CHAT_ID>``), or - only
    with ``level: 2`` AND ``auto_approve.enabled: true`` in config.yaml - by ``auto:level2`` with
    QA >= ``auto_approve.min_qa`` and the review delay elapsed;
 3. the file on disk has the same SHA-256 as the one that was approved (no edit after approval);
@@ -111,10 +112,12 @@ def _evaluate(
     approved_at = parse_iso(clip["approved_at"])
     if approved_at is None:
         return ["no approval timestamp"]
-    if by.startswith("telegram:"):
-        chat = expected_chat_id or secrets.get_secret(secrets.TELEGRAM_CHAT_ID)
-        if not chat or by != f"telegram:{chat}":
-            deny.append("approval did not come from the configured Telegram chat")
+    if by.startswith(("telegram:", "discord:")):
+        service = by.split(":", 1)[0]
+        env_name = secrets.TELEGRAM_CHAT_ID if service == "telegram" else secrets.DISCORD_OWNER_ID
+        owner = expected_chat_id or secrets.get_secret(env_name)
+        if not owner or by != f"{service}:{owner}":
+            deny.append("approval did not come from the configured owner/chat")
     elif by == "auto:level2":
         if not config.level2_active:
             deny.append("auto approval is not enabled in config (level 2 is off)")

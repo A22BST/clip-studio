@@ -88,7 +88,7 @@ CLIP_TRANSITIONS: dict[str, set[str]] = {
     "rejected": set(), "expired": set(), "low_qa": set(), "posted": set(),
 }  # fmt: skip
 
-APPROVER_PREFIXES = ("telegram:", "auto:level2")
+APPROVER_PREFIXES = ("discord:", "telegram:", "auto:level2")
 JSON_FIELDS = {"hashtags", "mentions", "highlight", "platforms", "results"}
 
 
@@ -306,7 +306,7 @@ class Store:
 
     def approve_clip(self, clip_id: int, approved_by: str, sha256: str) -> None:
         if not approved_by.startswith(APPROVER_PREFIXES):
-            raise StoreError("approved_by must be 'telegram:<chat id>' or 'auto:level2'")
+            raise StoreError("approved_by must be 'discord:<id>', 'telegram:<id>' or 'auto:level2'")
         with self._conn() as con:
             row = con.execute("SELECT * FROM clips WHERE id=?", (clip_id,)).fetchone()
             if row is None:

@@ -8,6 +8,7 @@ and no Telegram command that turns it on.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -87,6 +88,8 @@ class TrackerConfig(_Section):
 
 
 class AutoConfig(_Section):
+    #: Where approvals happen. Discord is the default; Telegram stays as an alternative backend.
+    chat: Literal["discord", "telegram"] = "discord"
     level: int = Field(default=1, ge=1, le=2)
     auto_approve: AutoApprove = AutoApprove()
     #: Clips under this QA score are never sent to Telegram.

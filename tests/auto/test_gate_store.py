@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from autoclip.auto import gate
 from autoclip.auto.config import AutoConfig
 from autoclip.auto.store import Store, StoreError
@@ -114,7 +113,7 @@ def test_gate_denies_missing_file(env, make_clip):
 def test_gate_denies_wrong_chat(env, make_clip, monkeypatch):
     cid = make_clip(approve=True)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
-    assert any("configured Telegram chat" in r for r in check(env, cid).reasons)
+    assert any("configured owner/chat" in r for r in check(env, cid).reasons)
 
 
 def test_gate_denies_level2_approval_when_level2_off(env, make_clip):

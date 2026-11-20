@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from autoclip.auto import gate
 from autoclip.auto.config import AutoConfig
 from autoclip.auto.store import Store
