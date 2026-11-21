@@ -22,12 +22,18 @@ from typing import Literal
 
 from ..config import WhisperSettings
 from . import ffmpeg, transcribe
+from .layouts import Layout, LayoutPlan
 
 log = logging.getLogger(__name__)
 
 EDGE_S = 5.0
 #: Similarity above which two words count as the same (Whisper misspells and hyphenates).
 MATCH_RATIO = 0.7
+
+DARK_OPENING_S = 0.5
+DARK_OPENING_FRAMES = 3
+DARK_LUMA_THRESHOLD = 32
+DARK_FRACTION_THRESHOLD = 0.6
 
 Edge = Literal["start", "end"]
 
@@ -39,6 +45,46 @@ class CutIssue:
     message: str
     expected: list[str]
     heard: list[str]
+    code: str = ""
+
+
+def check_dark_opening(clip: Path, plan: LayoutPlan | None = None) -> CutIssue | None:
+    """Sample rendered gameplay luma; a dark opening only warrants review.
+
+    Camera layouts put gameplay below the seam. Unknown layouts use the whole
+    frame. Decode failures, like audio QA failures, must never kill a render.
+    """
+    filters = [
+        "select='isnan(prev_selected_t)+gte(t-prev_selected_t,0.2)'",
+    ]
+    if plan is not None and plan.layout != Layout.TRACK and plan.cam is not None:
+        # Match the even-pixel camera height used by build_layout_filtergraph.
+        seam = f"max(2,min(ih-2,round(ih*{plan.cam_fraction}/2)*2))".replace(",", r"\,")
+        filters.append(f"crop=iw:ih-({seam}):0:({seam})")
+    filters.append("format=gray")
+    cmd = [
+        ffmpeg.ffmpeg_path(), "-hide_banner", "-loglevel", "error",
+        "-i", str(clip), "-t", str(DARK_OPENING_S), "-an",
+        "-vf", ",".join(filters), "-frames:v", str(DARK_OPENING_FRAMES),
+        "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
+    ]  # fmt: skip
+    try:
+        pixels = subprocess.run(cmd, check=True, capture_output=True, timeout=30).stdout
+    except Exception as exc:
+        log.warning("Dark-opening QA skipped for %s: %s", clip.name, exc)
+        return None
+    if not pixels:
+        log.warning("Dark-opening QA skipped for %s: no frames decoded", clip.name)
+        return None
+    fraction = sum(pixels.count(value) for value in range(DARK_LUMA_THRESHOLD)) / len(pixels)
+    if fraction > DARK_FRACTION_THRESHOLD:
+        return CutIssue(
+            "start", "warning",
+            f"dark gameplay pixel fraction {fraction:.3f} > {DARK_FRACTION_THRESHOLD:g} "
+            f"below luma {DARK_LUMA_THRESHOLD} in first {DARK_OPENING_S:g}s",
+            [], [], code="dark_opening",
+        )
+    return None
 
 
 def _norm(word: str) -> str:

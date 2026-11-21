@@ -42,7 +42,7 @@ from ..pipeline.runner import PipelineRunner
 from ..providers import ClipCandidate
 from .campaigns import Campaign
 from .chat import ChatLog
-from .ingest import StreamSource
+from .ingest import StreamSource, twitch_vod_id
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class ClipMeta:
     mentions: list[str] = field(default_factory=list)
     caption: str = ""
     hashtags: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -165,6 +166,7 @@ def prepare(
 ) -> Prepared:
     """Transcribe, score chat hype and write ``candidates.json``."""
     from ..pipeline import hype  # imported lazily: written by a parallel task
+    from . import hype_eval
 
     say = on_status or (lambda _msg: None)
     settings = make_settings(settings, campaign)
@@ -179,11 +181,44 @@ def prepare(
     silences = runner._load_or_detect_silences(audio)
 
     chat = stream.load_chat()
+    viewer_clips = []
+    try:
+        vod_id = twitch_vod_id(stream.vod_id)
+        if not vod_id:
+            say("Skipping viewer clips: VOD id unknown")
+        elif not (
+            hype_eval.user_env("TWITCH_CLIENT_ID")
+            and hype_eval.user_env("TWITCH_CLIENT_SECRET")
+        ):
+            say("Skipping viewer clips: Twitch credentials missing")
+        else:
+            # Match ingest's chat shift: raw video.start takes precedence over the trim.
+            shift = stream.trim_start_s
+            raw_path = stream.folder / "chat_raw.json"
+            if raw_path.exists():
+                raw = json.loads(raw_path.read_text(encoding="utf-8"))
+                shift = float((raw.get("video") or {}).get("start") or shift or 0.0)
+            viewer_clips = [
+                {
+                    "view_count": clip.views,
+                    "title": clip.title,
+                    "offset_s": clip.offset_s - shift,
+                }
+                for clip in hype_eval.fetch_viewer_clips(vod_id)
+                if 0 <= clip.offset_s - shift < source.duration_s
+            ]
+            viewer_clips.sort(key=lambda clip: clip["view_count"], reverse=True)
+    except Exception:
+        # Optional evidence must never prevent preparation; API errors may contain secrets.
+        viewer_clips = []
+        say("Skipping viewer clips: fetch failed")
+
     say("Scoring chat hype" if chat else "No chat available: scoring audio loudness only")
     loudness = hype.loudness_series(audio)
     peaks = hype.compute_hype(
         chat or ChatLog(duration_s=source.duration_s),
         loudness=loudness,
+        viewer_clips=[clip["offset_s"] for clip in viewer_clips],
         duration_s=source.duration_s,
         config=hype.HypeConfig(top_n=max_candidates),
     )
@@ -205,6 +240,11 @@ def prepare(
                 "window_end_s": round(peak.window_end, 1),
                 "hype_reasons": peak.reasons,
                 "chat_sample": peak.sample_messages,
+                "viewer_clips": [
+                    clip
+                    for clip in viewer_clips
+                    if peak.window_start <= clip["offset_s"] < peak.window_end
+                ][:3],
                 "first_word": first,
                 "last_word": last,
                 "transcript": highlights.render_window_text(transcript, first, last),
@@ -222,6 +262,7 @@ def prepare(
                     "streamer": stream.streamer,
                     "title": stream.title,
                     "duration_s": source.duration_s,
+                    "viewer_clips_used": len(viewer_clips),
                 },
                 "campaign": campaign.name,
                 "limits": {
@@ -394,6 +435,7 @@ def build_clip_rows(
             score=candidate.score,
             reason=candidate.reason.strip(),
         )
+        meta.warnings = highlights.quality_warnings(clip.end_s - clip.start_s, clip.hook)
         rows.append((clip, meta))
 
     rows.sort(key=lambda pair: pair[0].score, reverse=True)
@@ -463,7 +505,7 @@ def render(
 
     for clip, meta in rows:
         say(f"Clip {clip.rank}/{len(rows)}: {clip.title}")
-        notes: list[str] = []
+        notes: list[str] = list(meta.warnings)
         words = transcript.slice(clip.start_word, clip.end_word)
         duration = clip.end_s - clip.start_s
 
@@ -600,8 +642,12 @@ def render(
             _audible_words(render_words, clip.start_s, muted)[:4],
             _audible_words(render_words, clip.start_s, muted)[-4:],
         )
+        dark_issue = cutqa.check_dark_opening(destination, plan)
+        if dark_issue:
+            edge_issues.append(dark_issue)
         for issue in edge_issues:
-            notes.append(f"cut-point {issue.severity} ({issue.edge}): {issue.message}")
+            label = issue.code or "cut-point"
+            notes.append(f"{label} {issue.severity} ({issue.edge}): {issue.message}")
             qa_score = max(0, qa_score - (25 if issue.severity == "error" else 5))
 
         store.create_export(
