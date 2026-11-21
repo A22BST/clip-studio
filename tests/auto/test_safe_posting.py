@@ -60,7 +60,12 @@ def test_clips_are_staggered_across_platforms(env, make_clip):
     assert env.store.get_clip(cid)["status"] == "approved"
 
 
-def test_best_qa_goes_first_and_the_rest_wait_or_expire(env, make_clip):
+def test_best_qa_goes_first_and_the_rest_wait_or_expire(env, make_clip, monkeypatch):
+    # Approval timestamps and scheduling must share the same clock for queue expiry.
+    monkeypatch.setattr(
+        "autoclip.auto.store.now_iso",
+        lambda now=None: (now or NOW).isoformat(timespec="seconds"),
+    )
     config = cfg(queue_expiry_hours=30)
     low = make_clip(approve=True, qa=62)
     high = make_clip(approve=True, qa=95)
