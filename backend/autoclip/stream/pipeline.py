@@ -36,7 +36,7 @@ from .. import paths
 from ..config import Settings
 from ..db import store
 from ..db.models import Clip, Export, Job, Source, new_id
-from ..pipeline import captions, cutqa, export, ffmpeg, highlights
+from ..pipeline import captions, cutqa, export, ffmpeg, highlights, sfx
 from ..pipeline.boundaries import refine
 from ..pipeline.runner import PipelineRunner
 from ..providers import ClipCandidate
@@ -70,6 +70,8 @@ class ClipMeta:
     caption: str = ""
     hashtags: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    sfx: list[dict] = field(default_factory=list)
+    story: dict | None = None
 
 
 @dataclass
@@ -89,6 +91,8 @@ class ClipOutcome:
     path: str = ""
     caption: str = ""
     hashtags: list[str] = field(default_factory=list)
+    sfx: str = ""
+    story: dict | None = None
 
 
 # --------------------------------------------------------------------------
@@ -327,14 +331,7 @@ def load_highlights(path: Path) -> list[tuple[ClipCandidate, ClipMeta]]:
     parsed: list[tuple[ClipCandidate, ClipMeta]] = []
     for position, item in enumerate(items, start=1):
         try:
-            candidate = ClipCandidate.model_validate(
-                {
-                    k: item[k]
-                    for k in ("start_word_index", "end_word_index", "title", "hook", "score")
-                    if k in item
-                }
-                | {"reason": item.get("reason", "")}
-            )
+            candidate = highlights.StoryPick.model_validate(item)
         except Exception as exc:
             raise StreamPipelineError(f"clips[{position}] is invalid: {exc}") from exc
         spoiler = item.get("spoiler_level", "none")
@@ -359,6 +356,8 @@ def load_highlights(path: Path) -> list[tuple[ClipCandidate, ClipMeta]]:
                     mentions=[str(m) for m in item.get("mentions", [])],
                     caption=str(item.get("caption", "")),
                     hashtags=[str(h) for h in item.get("hashtags", [])],
+                    sfx=item.get("sfx", []),
+                    story=candidate.story.model_dump() if candidate.story is not None else None,
                 ),
             )
         )
@@ -392,10 +391,12 @@ def build_clip_rows(
                     layout_used="-",
                     spoiler_level=meta.spoiler_level,
                     status="rejected",
+                    story=meta.story,
                     notes=["raw cinematic footage: rejected by the spoiler filter"],
                 )
             )
             continue
+        story_checks: list[highlights.StoryVerdict] = []
         boundary = refine(
             transcript,
             candidate.start_word_index,
@@ -403,7 +404,15 @@ def build_clip_rows(
             silences=silences,
             min_duration_s=campaign.min_duration_s,
             max_duration_s=campaign.max_duration_s,
+            pick=candidate,
+            on_story_check=story_checks.append,
         )
+        for verdict in story_checks:
+            for reason in verdict.reasons:
+                note = f"story {verdict.status}: {reason}"
+                if note not in meta.warnings:
+                    meta.warnings.append(note)
+        rejected = any(verdict.status == "reject" for verdict in story_checks)
         if boundary is None:
             outcomes.append(
                 ClipOutcome(
@@ -415,8 +424,11 @@ def build_clip_rows(
                     layout_requested=meta.layout,
                     layout_used="-",
                     spoiler_level=meta.spoiler_level,
-                    status="failed",
-                    notes=["no valid cut within the campaign's duration limits"],
+                    status="rejected" if rejected else "failed",
+                    story=meta.story,
+                    notes=list(meta.warnings) if rejected else [
+                        *meta.warnings, "no valid cut within the campaign's duration limits"
+                    ],
                 )
             )
             continue
@@ -435,7 +447,7 @@ def build_clip_rows(
             score=candidate.score,
             reason=candidate.reason.strip(),
         )
-        meta.warnings = highlights.quality_warnings(clip.end_s - clip.start_s, clip.hook)
+        meta.warnings.extend(highlights.quality_warnings(clip.end_s - clip.start_s, clip.hook))
         rows.append((clip, meta))
 
     rows.sort(key=lambda pair: pair[0].score, reverse=True)
@@ -456,6 +468,14 @@ def write_report(outcomes: list[ClipOutcome], destination: Path, *, campaign: st
             f"(QA {o.qa_score}, {o.layout_used}, spoiler: {o.spoiler_level})"
         )
         lines.append(f"- source time: {o.start_s:.0f}s-{o.end_s:.0f}s  hook: {o.hook}")
+        if o.sfx:
+            lines.append(f"- sfx: {o.sfx}")
+        if o.story:
+            for name in ("setup", "change", "payoff"):
+                beat = o.story[name]
+                lines.append(
+                    f"- {name}: {beat['start_s']:g}s-{beat['end_s']:g}s: {beat['text']}"
+                )
         if o.caption:
             lines.append(
                 f"- caption: {o.caption}  tags: {' '.join('#' + h.lstrip('#') for h in o.hashtags)}"
@@ -486,14 +506,15 @@ def render(
     say = on_status or (lambda _msg: None)
     picks = load_highlights(prepared.highlights_path)
     rows, outcomes = build_clip_rows(prepared, picks, campaign)
+    out_dir = paths.exports_dir() / prepared.job.id
     if not rows:
+        write_report(outcomes, out_dir, campaign=campaign.name)
         raise StreamPipelineError("No usable clips: every pick was rejected or could not be cut.")
 
     runner = prepared.runner
     settings = runner.settings
     transcript = Transcript.load(runner.workspace.transcript)
     source_path = Path(prepared.source.path)
-    out_dir = paths.exports_dir() / prepared.job.id
     out_dir.mkdir(parents=True, exist_ok=True)
     style = captions.get_style(settings.export.caption_style)
     ratio = "9:16"
@@ -562,6 +583,7 @@ def render(
                     layout_used=layout.value,
                     spoiler_level=meta.spoiler_level,
                     status="blocked",
+                    story=meta.story,
                     qa_score=result.qa_score,
                     violations=[v.message for v in result.violations if v.blocking],
                     notes=notes,
@@ -599,6 +621,18 @@ def render(
                 audio_filter = bleep_audio_filter(muted)
 
         destination = out_dir / export.output_filename(clip.title or f"clip-{clip.rank}", ratio)
+        effect_name = ""
+        try:
+            effects = sfx.prepare_events(meta.sfx, duration)
+        except (ValueError, TypeError, ffmpeg.FFmpegError) as exc:
+            warning = f"sfx warning: {exc}; rendering without sfx"
+            meta.warnings.append(warning)
+            notes.append(warning)
+            meta.sfx = []
+        else:
+            if effects:
+                effect_name = effects[0].event.name
+                notes.append(f"sfx: {effect_name}")
         request = export.ExportRequest(
             source=source_path,
             destination=destination,
@@ -614,6 +648,7 @@ def render(
             disclosure_duration_s=campaign.disclosure_duration_s,
             overlay_path=overlay,
             extra_audio_filter=audio_filter,
+            sfx=meta.sfx,
         )
         try:
             export.export_clip(
@@ -631,6 +666,7 @@ def render(
                     layout_used=layout.value,
                     spoiler_level=meta.spoiler_level,
                     status="failed",
+                    story=meta.story,
                     notes=[*notes, str(exc)[:300]],
                 )
             )
@@ -672,6 +708,8 @@ def render(
                 layout_used=layout.value,
                 spoiler_level=meta.spoiler_level,
                 status="exported",
+                sfx=effect_name,
+                story=meta.story,
                 qa_score=qa_score,
                 notes=notes,
                 path=str(destination),
