@@ -17,12 +17,18 @@ Cutting inside actual silence is where a human editor would put the blade.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .prepare import Silence
 from .transcript import Transcript
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..providers import ClipCandidate
+    from .highlights import StoryVerdict
 
 #: How many words either side of the model's guess we'll search for a boundary.
 SENTENCE_SEARCH_WORDS = 12
@@ -65,6 +71,9 @@ def refine(
     silences: list[Silence] | None = None,
     min_duration_s: float = 20.0,
     max_duration_s: float = 90.0,
+    pick: ClipCandidate | None = None,
+    dark_spans: list[tuple[float, float]] | None = None,
+    on_story_check: Callable[[StoryVerdict], None] | None = None,
 ) -> Boundary | None:
     """Refine a proposed word range into a cuttable boundary.
 
@@ -81,6 +90,30 @@ def refine(
     last_index = len(transcript.words) - 1
     start_word = max(0, min(start_word, last_index))
     end_word = max(start_word, min(end_word, last_index))
+
+    # Import locally: highlights orchestrates this module too.
+    from .highlights import check_story
+
+    def story_check(start: float, end: float) -> StoryVerdict | None:
+        if pick is None:
+            return None
+        verdict = check_story(
+            pick,
+            (start, end),
+            transcript.words,
+            silences or [],
+            dark_spans,
+            min_duration_s=min_duration_s,
+            max_duration_s=max_duration_s,
+        )
+        if on_story_check:
+            on_story_check(verdict)
+        return verdict
+
+    raw_verdict = story_check(*transcript.time_range(start_word, end_word))
+    if raw_verdict is not None and raw_verdict.status == "reject":
+        log.info("Rejected raw story: %s", ", ".join(raw_verdict.reasons))
+        return None
 
     start_word = snap_start_to_sentence(transcript, start_word)
     end_word = snap_end_to_sentence(transcript, end_word)
@@ -99,6 +132,21 @@ def refine(
     # Alignment can only ever widen the clip, so re-check the ceiling.
     if end_s - start_s > max_duration_s:
         end_s = start_s + max_duration_s
+
+    verdict = story_check(max(0.0, start_s), end_s)
+    if verdict is not None and verdict.status == "reject":
+        log.info("Rejected refined story: %s", ", ".join(verdict.reasons))
+        return None
+    if verdict is not None and verdict.status == "widen":
+        start_s, end_s = verdict.start_s, verdict.end_s
+        # Widened cuts must also carry the restored words into captions and blur ranges.
+        covered = [
+            i
+            for i, word in enumerate(transcript.words)
+            if word.start < end_s and word.end > start_s
+        ]
+        if covered:
+            start_word, end_word = covered[0], covered[-1]
 
     return Boundary(
         start_s=max(0.0, start_s), end_s=end_s, start_word=start_word, end_word=end_word
