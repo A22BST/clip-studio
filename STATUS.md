@@ -208,3 +208,37 @@ Handover from the planning chat: `docs/setup/handover-master.md`; its setup file
   Twitch Client Secret reset; archive the old automation session (`local_f0829020`) from the sidebar.
 - Sessions: build session 1 and fused-hype told to stop (done). Setup helper `local_71215f0d` walks Ahmad through Upload-Post/Telegram.
   New sessions are started by the master so they report to it.
+
+## Free-model chain (2026-11-21, branch `claude/free-model-chain-0660c4`): BUILT, mocked tests only
+Plan decided by Ahmad in the CoWorkOS chat (free LLMs by default; Claude and Codex stay free for real work). Built by Codex
+(gpt-6.1-sol, medium), reviewed by the build session. Provider facts and caveats: `docs/free-model-presets-verified-2026-11-21.md`.
+- Chain: `providers/chain.py` (`ChainProvider`, `complete_text`, `complete_validated`). Entries are provider BUCKETS (one account each) with
+  an ordered `models` list; model failures fall to the next model in the bucket, rate limit / daily quota / auth / connection fall to the next
+  bucket. Daily usage is counted per provider (failed calls too) in `<auto_dir>/chain-usage.json` with per-provider reset (Google: midnight
+  Pacific, others UTC); a spent bucket is skipped until reset. Per-bucket `max_prompt_tokens` guard (Groq free is 8K tokens/min, so it only
+  gets small prompts). Claude is OFF (`chain.allow_claude = false`), an explicit opt-in last entry. Local Ollama is the last free entry and is
+  skipped unless the tick lock is absent and no job is running (unknown = skipped).
+- Default order: zai-glm-flash, nvidia-nim, openrouter-free, google-ai-studio, cloudflare-workers-ai, groq, aihubmix, pollinations, ollama.
+  Change it in settings (`chain.entries`); `autoclip config chain` lists buckets, key present/missing, usage today.
+- `auto/learn.py`: weekly report on the chain (`learn.backend = chain`, the default; `claude` switches back).
+- `auto/select.py`: `selection.backend = claude | chain`. The chain path inlines `candidates.json`, `what_works.md`, the campaign yaml and the
+  /clip skill body, gets plain text back (no tools, no files), writes `highlights.json` itself, keeps `validate_highlights` and retry-with-error.
+  DEFAULT STAYS `claude` until Ahmad has seen the comparison numbers.
+- Provider and model per clip: `selection_meta.json` in the job folder, copied into the clip's DB row and tracker CSV columns
+  (`provider`, `model`); existing DBs migrate. The claude path records `claude-cli` + model. Old clips stay blank.
+- Comparison: `scripts/selection_compare.py JOB VOD [--offset-s N] [--claude] [--only a,b] [--clips-json f] [--dry-run]` scores each keyed
+  bucket/model and Claude against the top viewer clips of the VOD (recall of top-N, precision of picks). Needs a prepared job
+  (`clip stream ... --prepare-only`) and Twitch app creds (or a cached clips json). One job is a small sample: run several.
+- Verified: mocked tests only (pytest: chain fallback on 429/quota/connection/bad JSON, model fallback, daily budget + reset, persisted
+  counter, token guard, Cloudflare account id, ollama gating, Claude off by default, learn/select via chain, tracker migration). NO live
+  provider call was made (no keys exist). Preset URLs, model IDs and limits were read from each provider's own pages on 2026-11-21, not tested.
+- Preset caveats: Z.ai free IDs lowercased by inference and sit under legacy pricing; NVIDIA trial limits not published on pages read;
+  Groq free is 8K tokens/min (small prompts only); AIHubMix needs a one-time $1 top-up (10 calls total before); Google free-tier data is used
+  to improve products per the pricing page (EEA exception NOT found there: confirm at aistudio.google.com/docs/terms); Pollinations now
+  REQUIRES a key (the "no key" note was out of date); OpenRouter 50/day until $10 credit is bought.
+- Keys Ahmad adds (`autoclip config set-secret NAME`): `zai-glm-flash`, `nvidia-nim`, `openrouter-free`, `google-ai-studio`,
+  `cloudflare-workers-ai` plus `cloudflare-account-id`, `groq`, `aihubmix`, `pollinations`. Start with Z.ai, OpenRouter, Google, NVIDIA.
+- Next: add 2-3 keys, run `selection_compare.py` on a prepared job with `--claude`, then decide the selection default and order.
+- Known: `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire` fails on main too (clock-dependent, not touched).
+- 21 Nov (free-model chain build session): free-model chain built on branch `claude/free-model-chain-0660c4`, mocked tests only, selection default
+  still `claude` pending the comparison; see section "Free-model chain". Not pushed or merged.

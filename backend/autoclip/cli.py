@@ -357,6 +357,35 @@ def config_path_cmd() -> None:
     console.print(str(paths.config_path()))
 
 
+@config_app.command("chain")
+def config_chain() -> None:
+    """List ordered provider buckets without displaying credentials."""
+    from .providers.chain import ChainProvider, usage
+    from .providers.presets import PRESETS
+
+    settings = config.load()
+    table = Table(title="Provider chain", expand=True)
+    for heading in ("Bucket", "Models (in order)", "Key", "Today / daily", "Verified"):
+        table.add_column(heading, overflow="fold")
+    for entry in ChainProvider(settings).entries:
+        local = entry.name.lower() == "ollama"
+        key_present = bool(config.get_secret(entry.key_name, settings)) if not local else False
+        key_status = "local" if local else "present" if key_present else "missing"
+        if "{account_id}" in (entry.base_url or "") and not config.get_secret(
+            "cloudflare-account-id", settings
+        ):
+            key_status += "; account id missing"
+        record = usage(entry)
+        budget = str(entry.daily_requests) if entry.daily_requests is not None else "unknown"
+        today = f"{record['used']} / {budget}" + (" (spent)" if record["spent"] else "")
+        preset = PRESETS.get(entry.preset or "", {})
+        table.add_row(
+            entry.name, ", ".join(entry.models) or "no model configured", key_status,
+            today, "yes" if preset.get("verified") else "no",
+        )
+    console.print(table)
+
+
 @config_app.command("set-secret")
 def config_set_secret(
     key: str = typer.Argument(

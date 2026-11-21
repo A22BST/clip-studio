@@ -59,14 +59,16 @@ class OpenAIProvider(LLMProvider):
         kwargs = {"api_key": key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        return AsyncOpenAI(**kwargs)
+        return AsyncOpenAI(**kwargs, max_retries=0, timeout=60.0)
 
     def _is_local(self) -> bool:
         return bool(self.base_url) and (
             "localhost" in self.base_url or "127.0.0.1" in self.base_url
         )
 
-    async def _complete(self, system: str, user: str, config: DetectionConfig) -> str:
+    async def _complete(
+        self, system: str, user: str, config: DetectionConfig, *, json_mode: bool = True
+    ) -> str:
         client = self._client()
         request = {
             "model": self.model,
@@ -80,7 +82,7 @@ class OpenAIProvider(LLMProvider):
         # it, so a failed request is retried once without it.
         try:
             response = await client.chat.completions.create(
-                **request, response_format={"type": "json_object"}
+                **request, **({"response_format": {"type": "json_object"}} if json_mode else {})
             )
         except Exception as exc:
             if _is_unsupported_parameter(exc):
@@ -122,34 +124,31 @@ def _is_unsupported_parameter(exc: Exception) -> bool:
 
 
 def _translate(exc: Exception, provider: str, model: str) -> ProviderError:
-    message = str(exc)
-    lowered = message.lower()
-
-    if "401" in lowered or "invalid api key" in lowered or "incorrect api key" in lowered:
-        return ProviderError(
-            "The endpoint rejected the API key.",
-            provider=provider,
-            hint="Re-add it with `autoclip config set-secret openai`.",
+    # Do not include upstream exception text: it can contain credentials or URLs.
+    lowered = str(exc).lower()
+    status = getattr(exc, "status_code", None)
+    if status in (401, 403) or any(
+        x in lowered
+        for x in (
+            "401",
+            "403",
+            "invalid api key",
+            "incorrect api key",
+            "authentication",
+            "invalid x-api-key",
         )
-    if "429" in lowered or "rate limit" in lowered:
-        return ProviderError(
-            "Rate limit reached.",
-            provider=provider,
-            hint="Wait and retry, or switch providers.",
-        )
-    if "404" in lowered or "does not exist" in lowered or "model_not_found" in lowered:
-        return ProviderError(
-            f"The endpoint does not recognise the model '{model}'.",
-            provider=provider,
-            hint="Check the model name against your provider's catalogue.",
-        )
-    if "connection" in lowered or "connect" in lowered:
-        return ProviderError(
-            "Could not reach the endpoint.",
-            provider=provider,
-            hint="Check the base URL in settings, and that any local server is running.",
-        )
-    if "quota" in lowered or "billing" in lowered:
-        return ProviderError("The account has no remaining quota.", provider=provider)
-
-    return ProviderError(f"Request failed: {message}", provider=provider)
+    ):
+        kind = "auth"
+    elif any(x in lowered for x in ("quota", "billing", "credit", "insufficient_quota")):
+        kind = "quota"
+    elif status == 429 or "429" in lowered or "rate limit" in lowered:
+        kind = "rate_limit"
+    elif isinstance(exc, TimeoutError) or any(x in lowered for x in ("timeout", "timed out")):
+        kind = "timeout"
+    elif isinstance(exc, ConnectionError) or "connect" in lowered:
+        kind = "connection"
+    elif status == 404 or "404" in lowered or "model_not_found" in lowered:
+        kind = "model"
+    else:
+        kind = "unknown"
+    return ProviderError(f"Provider request failed ({kind}).", provider=provider, kind=kind)

@@ -37,10 +37,13 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 class ProviderError(RuntimeError):
     """A provider could not produce a usable response."""
 
-    def __init__(self, message: str, *, provider: str = "", hint: str = "") -> None:
+    def __init__(
+        self, message: str, *, provider: str = "", hint: str = "", kind: str = "unknown"
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.hint = hint
+        self.kind = kind
 
     def __str__(self) -> str:
         base = super().__str__()

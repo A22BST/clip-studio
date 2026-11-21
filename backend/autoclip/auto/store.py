@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import paths
 from .config import auto_dir
 
 SCHEMA = """
@@ -131,6 +132,10 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as con:
             con.executescript(SCHEMA)
+            columns = {r["name"] for r in con.execute("PRAGMA table_info(clips)")}
+            for name in ("provider", "model"):
+                if name not in columns:
+                    con.execute(f"ALTER TABLE clips ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -261,6 +266,16 @@ class Store:
 
     # -- clips ----------------------------------------------------------------------
     def add_clip(self, **fields: Any) -> int:
+        job = self.get_job(fields["job_id"])
+        if job and job.get("autoclip_job_id"):
+            meta_file = paths.job_work_dir(job["autoclip_job_id"]) / "selection_meta.json"
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                for name in ("provider", "model"):
+                    if isinstance(meta.get(name), str):
+                        fields.setdefault(name, meta[name])
+            except (OSError, ValueError, AttributeError):
+                pass
         ts = now_iso()
         cols = {k: _enc(k, v) for k, v in fields.items()}
         cols |= {"created_at": ts, "updated_at": ts}
@@ -334,7 +349,9 @@ class Store:
         self, clip_id: int, approved_by: str, sha256: str, path: str | None = None
     ) -> None:
         """Approve a previewed clip. ``path`` (optional) switches the clip to the immutable
-        ``approved/<sha>.mp4`` copy in the SAME transaction, so the posted file is the approved one."""
+        ``approved/<sha>.mp4`` copy in the SAME transaction.
+        The posted file is the approved one.
+        """
         if not approved_by.startswith(APPROVER_PREFIXES):
             raise StoreError("approved_by must be 'discord:<id>', 'telegram:<id>' or 'auto:level2'")
         with self._conn() as con:
@@ -365,7 +382,9 @@ class Store:
             ).fetchall()
             taken = {p for row in live for p in json.loads(row["platforms"])}
             if taken & set(platforms):
-                raise StoreError(f"clip {clip_id} already has a post on {sorted(taken & set(platforms))}")
+                raise StoreError(
+                    f"clip {clip_id} already has a post on {sorted(taken & set(platforms))}"
+                )
             cur = con.execute(
                 "INSERT INTO posts(clip_id,scheduled_for,platforms,created_at) VALUES(?,?,?,?)",
                 (clip_id, now_iso(scheduled_for), json.dumps(platforms), now_iso()),
@@ -406,7 +425,8 @@ class Store:
         """posting -> queued again (gate denied for now, or a retryable error)."""
         with self._conn() as con:
             con.execute(
-                "UPDATE posts SET status='queued', error=?, scheduled_for=COALESCE(?, scheduled_for)"
+                "UPDATE posts SET status='queued', error=?, "
+                "scheduled_for=COALESCE(?, scheduled_for)"
                 " WHERE id=? AND status='posting'",
                 (error[:500], now_iso(retry_at) if retry_at else None, post_id),
             )
