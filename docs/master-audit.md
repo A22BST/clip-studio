@@ -43,6 +43,13 @@ Checked by the project master session against the files, not the reports. "Verif
 - Archive the finished sessions (hype calibration, hype research): Ahmad's OK.
 - TikTok handle confirmed by Ahmad: `crazy_heist` (underscore). Instagram `crazy.heist`, YouTube `@crazy_heist`.
 
+- Found on re-reading the chats (21 Nov): **account warmup** - KreekCraft's brief says new accounts must follow the campaign's
+  warmup process (exact steps not found; likely in the campaign Discord). The day-0 checklist plan was: day 1 no posts, day 2 one
+  test clip on TikTok only, day 3 1-2 per platform. Accounts were made 20 Nov, so the first hand post goes to TikTok first.
+- Profile pictures for the three accounts: Ahmad is making one in ChatGPT (not done as far as known).
+- Old sessions (planning chat, build session 1) are parents of other sessions and relay their notes to Ahmad; the master now starts new
+  sessions itself so reports come here.
+
 ## Could be better
 **Clip quality**
 - Hook and `#ad` text are small (about 4% of frame width) and sit on the face. TikTok hooks are usually large, high-contrast,
