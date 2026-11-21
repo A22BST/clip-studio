@@ -1,0 +1,34 @@
+# Clip Studio automation config: the decided FULLY AUTOMATIC mode (Ahmad, 21 Nov 2026).
+# Copy to ~/.autoclip/auto/config.yaml with:  clip-auto init-config
+# Every post still has to pass gate.py (rules, QA >= min_qa, not raw-cinematic, budget, caps, PAUSE).
+# Secrets are NOT in this file: UPLOAD_POST_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID are Windows
+# User environment variables.
+
+chat: telegram            # one-way pings + /pause /resume /status /submitted (Discord is dropped)
+level: 2                  # 2 = no human approval ...
+auto_approve:
+  enabled: true           # ... and this switch must be on as well
+  min_qa: 90              # clips below this QA are never posted (and never sent)
+  delay_minutes: 60       # review window: a posted-to-be clip can still be vetoed (Reject / /pause)
+
+upload_post:
+  profile: crazyheist     # the Upload-Post profile that holds TikTok crazy_heist, Instagram
+                          # crazy.heist and YouTube @crazy_heist
+  manual_platforms: []    # Upload-Post Basic ($24/month) includes TikTok. Free does NOT: use [tiktok] there.
+
+# Safe pace (per platform per day: 1 in week 1, 2 in week 2, then 3; >= 4 h apart plus jitter;
+# platforms staggered 60-120 min; unposted clips expire after 48 h).
+post:
+  timezone: Europe/Copenhagen
+  per_platform_daily_caps: [1, 2, 3]
+  min_gap_hours_per_platform: 4
+  jitter_minutes: 30
+  stagger_minutes: [60, 120]
+  queue_expiry_hours: 48
+  start_date: ""          # first day of the account warm-up as YYYY-MM-DD; empty = first scheduled post
+
+throttle:
+  enabled: true           # last 3 posts < 20% of the 7-day average -> platform paused 48 h, cap halved
+
+submit:
+  reminder_minutes: [20]  # "Posted on <platform>, submit now" is repeated at +20 min until /submitted

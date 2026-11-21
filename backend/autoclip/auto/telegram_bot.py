@@ -25,8 +25,10 @@ from .approval import (
     approve,
     begin_edit_hook,
     reject,
+    restore_stale_edits,
     send_pending_previews,
     status_text,
+    submitted_text,
 )
 from .config import AutoConfig, load_config
 from .notify import TelegramNotifier
@@ -78,12 +80,7 @@ def build_application(
             text = status_text(store, config)
         elif name == "/submitted":
             parts = update.effective_message.text.split(maxsplit=1)
-            post_id = store.mark_submitted_url(parts[1]) if len(parts) > 1 else None
-            text = (
-                f"Logged post {post_id} as submitted."
-                if post_id
-                else "Usage: /submitted <post URL> (no posted clip has that URL)"
-            )
+            text = submitted_text(store, parts[1] if len(parts) > 1 else "")
         elif name == "/previews":
             count = await run_sync(send_pending_previews, store, notifier, config)
             text = f"Sent {count} previews."
@@ -97,6 +94,7 @@ def build_application(
         query = update.callback_query
         try:
             action, raw_id = query.data.split(":", 1)
+            raw_id, _, token = raw_id.partition(":")
             item_id = int(raw_id)
         except (AttributeError, ValueError):
             await query.answer("Invalid action.")
@@ -108,7 +106,9 @@ def build_application(
             return
         await query.answer()
         if action == "a":
-            text = await run_sync(approve, store, item_id, expected_chat, config)
+            text = await run_sync(
+                approve, store, item_id, expected_chat, config, "telegram", token or None
+            )
         elif action == "r":
             text = await run_sync(reject, store, item_id, expected_chat)
         elif action == "e":
@@ -160,6 +160,7 @@ def build_application(
             if time.monotonic() >= expires:
                 pending.pop(key, None)
                 _restore_edit(clip_id)
+        await run_sync(restore_stale_edits, store)
         await run_sync(send_pending_previews, store, notifier, config)
         for job in extra_jobs or []:
             try:

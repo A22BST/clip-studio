@@ -1,8 +1,9 @@
 """Automation settings: ``<root>/auto/config.yaml`` (every field optional, safe defaults).
 
-Level 2 (post without a tap) is OFF by default and needs BOTH ``level: 2`` and
-``auto_approve.enabled: true`` in this file. There is no CLI flag, no environment variable
-and no Telegram command that turns it on.
+Level 2 (post without a tap) needs BOTH ``level: 2`` and ``auto_approve.enabled: true`` in this
+file. There is no CLI flag, no environment variable and no Telegram command that turns it on. The
+code defaults stay at level 1 (fail closed when the file is missing); the decided fully automatic
+mode ships as ``docs/auto-config.example.yaml`` (``clip-auto init-config``).
 """
 
 from __future__ import annotations
@@ -78,9 +79,9 @@ class UploadPostConfig(_Section):
     tiktok_privacy: str = "PUBLIC_TO_EVERYONE"
     tiktok_post_mode: str = "DIRECT_POST"  # MEDIA_UPLOAD would only create drafts
     youtube_privacy: str = "public"
-    #: Platforms the Upload-Post plan cannot post (the free tier has no TikTok). They are not
-    #: uploaded: the chat gets the file + caption to post by hand. Clear this after upgrading.
-    manual_platforms: list[str] = ["tiktok"]
+    #: Platforms the Upload-Post plan cannot post (the FREE tier has no TikTok; Basic and up do).
+    #: They are not uploaded: the chat gets the file + caption to post by hand. Default: none.
+    manual_platforms: list[str] = []
 
 
 class WatchConfig(_Section):
@@ -108,9 +109,22 @@ class TrackerConfig(_Section):
     google_sheet_id: str = ""  # optional; needs Google credentials, not built yet
 
 
+class SubmitConfig(_Section):
+    #: Minutes after a post at which "submit now" is repeated until /submitted (deadline = 30 min).
+    reminder_minutes: list[int] = [20]
+
+    @field_validator("reminder_minutes")
+    @classmethod
+    def _minutes(cls, value: list[int]) -> list[int]:
+        if any(m <= 0 for m in value):
+            raise ValueError("reminder_minutes must be positive")
+        return sorted(set(value))
+
+
 class AutoConfig(_Section):
-    #: Where approvals happen. Discord is the default; Telegram stays as an alternative backend.
-    chat: Literal["discord", "telegram"] = "discord"
+    #: The chat: one-way pings + /pause /resume /status /submitted. Telegram is the default;
+    #: the Discord code is kept but is no longer part of the default path.
+    chat: Literal["discord", "telegram"] = "telegram"
     level: int = Field(default=1, ge=1, le=2)
     auto_approve: AutoApprove = AutoApprove()
     #: Clips under this QA score are never sent to Telegram.
@@ -122,6 +136,7 @@ class AutoConfig(_Section):
     selection: SelectionConfig = SelectionConfig()
     tracker: TrackerConfig = TrackerConfig()
     throttle: ThrottleConfig = ThrottleConfig()
+    submit: SubmitConfig = SubmitConfig()
     #: Delete the downloaded VOD after a job finishes (exports are kept).
     delete_source_after_render: bool = True
 
@@ -129,12 +144,37 @@ class AutoConfig(_Section):
     def level2_active(self) -> bool:
         return self.level == 2 and self.auto_approve.enabled
 
+    def mode_text(self) -> str:
+        if self.level2_active:
+            return (
+                f"level 2 fully automatic (auto-approve QA >= {self.auto_approve.min_qa}, "
+                f"review window {self.auto_approve.delay_minutes} min), chat {self.chat}"
+            )
+        return f"level {self.level}, human approval in {self.chat} (auto-approve off)"
+
     def tracker_csv(self) -> Path:
         return Path(self.tracker.csv_path) if self.tracker.csv_path else auto_dir() / "tracker.csv"
 
 
 def config_file() -> Path:
     return auto_dir() / "config.yaml"
+
+
+def example_config_file() -> Path:
+    """The repo template ``docs/auto-config.example.yaml`` (the decided fully automatic mode)."""
+    return Path(__file__).resolve().parents[3] / "docs" / "auto-config.example.yaml"
+
+
+def init_config(path: Path | None = None, *, force: bool = False) -> Path:
+    """Copy the template to ``~/.autoclip/auto/config.yaml``. Never overwrites without ``force``."""
+    target = path or config_file()
+    if target.exists() and not force:
+        raise FileExistsError(f"{target} already exists (use --force to overwrite)")
+    template = example_config_file()
+    AutoConfig.model_validate(yaml.safe_load(template.read_text(encoding="utf-8")) or {})
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    return target
 
 
 def load_config(path: Path | None = None) -> AutoConfig:

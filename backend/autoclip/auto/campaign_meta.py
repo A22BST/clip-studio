@@ -27,6 +27,8 @@ class AutoMeta(BaseModel):
     active: bool = True
     ends_at: date | None = None
     budget_usd: float | None = Field(default=None, gt=0)
+    #: Max payout per clip (per post): the budget estimate never counts more than this for one post.
+    cap_per_clip_usd: float | None = Field(default=None, gt=0)
     submit_url: str = ""
     notes: str = ""
 

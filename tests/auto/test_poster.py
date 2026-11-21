@@ -277,7 +277,7 @@ def test_reminder_timing_and_submission(env, make_clip):
         (30, 3),
         (31, 3),
     ]:
-        send_reminders(env.store, notifier, now + timedelta(minutes=minutes))
+        send_reminders(env.store, notifier, now + timedelta(minutes=minutes), (10, 20))
         assert len(notifier.texts) == expected
     assert "20 min left to submit" in notifier.texts[0][0]
     assert "10 min left to submit" in notifier.texts[1][0]
@@ -293,7 +293,7 @@ def test_submitted_posts_have_no_reminders(env, make_clip):
     run(env, notifier, FakeClient(), now)
     env.store.mark_submitted(pid)
     notifier.texts.clear()
-    send_reminders(env.store, notifier, now + timedelta(minutes=40))
+    send_reminders(env.store, notifier, now + timedelta(minutes=40), (10, 20))
     assert not notifier.texts
 
 
@@ -380,8 +380,8 @@ def test_deadline_after_missed_ticks_is_sent_once(env, make_clip):
     notifier = RecordingNotifier()
     run(env, notifier, FakeClient(), now)
     notifier.texts.clear()
-    send_reminders(env.store, notifier, now + timedelta(minutes=40))
-    send_reminders(env.store, notifier, now + timedelta(minutes=40))
+    send_reminders(env.store, notifier, now + timedelta(minutes=40), (10, 20))
+    send_reminders(env.store, notifier, now + timedelta(minutes=40), (10, 20))
     assert len(notifier.texts) == 1
     assert "Deadline passed" in notifier.texts[0][0]
     assert env.store.get_post(pid)["reminders_sent"] == 3

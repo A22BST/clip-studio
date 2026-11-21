@@ -136,6 +136,25 @@ async def test_approve_callback_answers_and_removes_buttons(setup_bot):
     assert store.list_posts() == []
 
 
+async def test_approve_callback_with_preview_token(setup_bot):
+    store, clip_id, app, _, _ = setup_bot
+    stale = update(data=f"a:{clip_id}:000000000000")
+    await dispatch(app, stale, CallbackQueryHandler)
+    assert "out of date" in stale.callback_query.message.reply_text.call_args.args[0]
+    assert store.get_clip(clip_id)["status"] == "pending_approval"
+    token = store.get_clip(clip_id)["previewed_sha256"][:12]
+    fresh = update(data=f"a:{clip_id}:{token}")
+    await dispatch(app, fresh, CallbackQueryHandler)
+    assert store.get_clip(clip_id)["status"] == "approved"
+
+
+async def test_submitted_command_without_url_logs_the_only_waiting_post(setup_bot):
+    store, clip_id, app, _, _ = setup_bot
+    event = update(text="/submitted")
+    await dispatch(app, event, CommandHandler, "submitted")
+    assert "Nothing is waiting" in event.effective_message.reply_text.call_args.args[0]
+
+
 async def test_reject_callback(setup_bot):
     store, clip_id, app, _, _ = setup_bot
     event = update(data=f"r:{clip_id}")

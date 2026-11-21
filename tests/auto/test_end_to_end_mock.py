@@ -130,7 +130,8 @@ def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
     assert len(clips) == 1 and clips[0]["status"] == "pending_approval"  # the cutscene was dropped
     assert len(notifier.videos) == 1  # preview sent with Approve/Reject/Edit buttons
     ids = [b.callback_data for row in notifier.videos[0][2] for b in row]
-    assert ids == [f"a:{clips[0]['id']}", f"r:{clips[0]['id']}", f"e:{clips[0]['id']}"]
+    token = clips[0]["previewed_sha256"][:12]
+    assert ids == [f"a:{clips[0]['id']}:{token}", f"r:{clips[0]['id']}", f"e:{clips[0]['id']}"]
     assert publisher.uploads == []  # nothing posts before a human decides
 
     # 2. Ahmad taps Approve (Discord owner)

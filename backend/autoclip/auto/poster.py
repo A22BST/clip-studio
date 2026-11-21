@@ -131,7 +131,16 @@ def _poll(client, request_id, results, platforms, sleep):
     return results
 
 
-def _announce(notifier, post, auto):
+def deadline_text(deadline, tz_name: str | None) -> str:
+    """``14:32 Europe/Copenhagen (12:32 UTC)``; just UTC when no timezone is given."""
+    utc = deadline.astimezone(UTC)
+    if not tz_name:
+        return f"{utc:%H:%M} UTC"
+    local = deadline.astimezone(ZoneInfo(tz_name))
+    return f"{local:%H:%M} {tz_name} ({utc:%H:%M} UTC)"
+
+
+def _announce(notifier, post, auto, tz_name: str | None = None):
     deadline = parse_iso(post["submit_deadline"])
     for platform, result in post["results"].items():
         url = result.get("url") or result.get("message") or "URL pending"
@@ -140,7 +149,7 @@ def _announce(notifier, post, auto):
                 f"\u2705 Posted on {platform} \u2014 submit to Content Rewards now "
                 f"({auto.campaign.submit_deadline_min} min)",
                 f"Campaign: {auto.campaign.name}",
-                f"Deadline: {deadline:%H:%M} UTC",
+                f"Deadline: {deadline_text(deadline, tz_name)}",
                 url,
             ]
         )
@@ -167,7 +176,6 @@ def _send_hand_post(notifier, clip, manual, auto) -> None:
             f"POST BY HAND on {', '.join(manual)}: upload this clip and use this text.",
             clip["caption"],
             tags,
-            f"Full-quality file: {clip['path']}",
         ]
     )
     limit = getattr(notifier, "max_upload_bytes", 45 * 1024 * 1024)
@@ -204,6 +212,56 @@ def refresh_urls(store: Store, client: UploadPostClient, notifier: Notifier) -> 
             notifier.send_text("Post links available:\n" + "\n".join(new_links))
 
 
+def dry_run_posts(
+    store: Store,
+    config: AutoConfig,
+    notifier: Notifier,
+    now: datetime,
+    campaigns_dir: Path | None = None,
+    gate_kwargs: dict[str, Any] | None = None,
+) -> list[int]:
+    """``clip-auto tick --dry-run``: everything except the upload.
+
+    Every queued post goes through the full gate, evaluated at the moment it is scheduled for (so
+    the review window and caps are judged as they will be then), and the chat gets "WOULD POST"
+    (or "WOULD NOT POST" with the reasons). Nothing is claimed, uploaded, marked posted or counted
+    against the caps; each post is announced once."""
+    tz = ZoneInfo(config.post.timezone)
+    announced: list[int] = []
+    for post in store.list_posts("queued"):
+        key = f"dry_run:{post['id']}:{post['scheduled_for']}"
+        if store.get_meta(key):
+            continue
+        scheduled = parse_iso(post["scheduled_for"])
+        decision = gate.check_post_allowed(
+            store,
+            post["clip_id"],
+            config=config,
+            platforms=post["platforms"],
+            post_id=post["id"],
+            now=max(now, scheduled),
+            campaigns_dir=campaigns_dir,
+            **(gate_kwargs or {}),
+        )
+        clip = store.get_clip(post["clip_id"])
+        when = f"{scheduled.astimezone(tz):%Y-%m-%d %H:%M} {config.post.timezone}"
+        head = "WOULD POST" if decision.allowed else "WOULD NOT POST"
+        lines = [
+            f"{head} on {', '.join(post['platforms'])} (dry run: nothing was uploaded)",
+            f"Clip: {clip['title']} (QA {clip['qa_score']})",
+            f"Scheduled for: {when}",
+        ]
+        if decision.allowed:
+            lines.append("Gate: all checks passed (rules, QA, budget, caps, pause).")
+        else:
+            lines += [f"Blocked: {reason}" for reason in decision.reasons]
+        notifier.send_text("\n".join(lines))
+        store.set_meta(key, "1")
+        store.log_event("dry_run_post", f"post {post['id']} {head.lower()}")
+        announced.append(post["id"])
+    return announced
+
+
 def post_due(
     store: Store,
     config: AutoConfig,
@@ -213,8 +271,11 @@ def post_due(
     campaigns_dir: Path | None = None,
     gate_kwargs: dict[str, Any] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    dry_run: bool = False,
 ) -> list[int]:
     now = now or datetime.now(UTC)
+    if dry_run:
+        return dry_run_posts(store, config, notifier, now, campaigns_dir, gate_kwargs)
     client = client or UploadPostClient(
         base_url=config.upload_post.base_url,
         profile=config.upload_post.profile,
@@ -299,7 +360,7 @@ def post_due(
             posted_at=now,
             submit_deadline=now + timedelta(minutes=auto.campaign.submit_deadline_min),
         )
-        _announce(notifier, store.get_post(post_id), auto)
+        _announce(notifier, store.get_post(post_id), auto, config.post.timezone)
         with suppress(Exception):
             submit_log.append_posted(store, config, post_id)
         if manual:

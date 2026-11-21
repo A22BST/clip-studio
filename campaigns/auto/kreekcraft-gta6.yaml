@@ -1,7 +1,16 @@
 # Automation sidecar for campaigns/kreekcraft-gta6.yaml (see backend/autoclip/auto/campaign_meta.py).
+# Numbers read from the campaign page on 2026-11-20 (docs/setup/kreekcraft-gta6.from-setup-chat.yaml);
+# the campaign page is the source of truth: re-check budget and end date now and then.
 streamers: [kreekcraft]
 platform: twitch
 active: true
-# ends_at: 2026-12-31     # set when the campaign page shows an end date
-# budget_usd: 400         # campaign cap ($300-400); stops posting when estimated earnings reach it
-submit_url: ""            # Ahmad: paste the campaign's Content Rewards submission link
+# The page shows no end date. Posting stops by itself when the budget is reached, or set
+# `ends_at: YYYY-MM-DD` once the page names a date.
+ends_at: null
+# Budget left on 2026-11-20: $6,045 of $6,824 ($779 used). Rate is $1 per 1,000 views (in the rules
+# file). The gate stops posting when OUR estimated earnings reach this figure.
+budget_usd: 6045
+# Max payout per clip: the page shows $300 (a news article said $400). Estimates count at most this per post.
+cap_per_clip_usd: 300
+# Campaign page; clips are submitted there within 30 minutes of posting (Content Rewards has no API).
+submit_url: "https://contentrewards.com/c/campaigns/2eaa14fb-6927-4136-897e-b096e0d907d6"

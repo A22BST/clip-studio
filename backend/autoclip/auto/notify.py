@@ -8,6 +8,7 @@ id are never logged and never appear in exceptions.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,6 +18,18 @@ import httpx
 from . import secrets
 
 API = "https://api.telegram.org"
+
+# Local file paths must never reach a chat: Windows drive/UNC paths and common POSIX roots.
+_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s'\"<>|]*"
+    r"|\\\\[^\s'\"<>|]+"
+    r"|(?<![\w:/.])/(?:home|Users|tmp|var|mnt|opt|root|private)/[^\s'\"<>|]*"
+)
+
+
+def redact_paths(text: str) -> str:
+    """Replace local file system paths in a chat message with ``<path>``."""
+    return _PATH_RE.sub("<path>", text)
 
 
 @dataclass(frozen=True)
@@ -74,7 +87,7 @@ class TelegramNotifier:
 
     def send_text(self, text: str, buttons: Buttons | None = None) -> int | None:
         chat_id = secrets.require_secret(secrets.TELEGRAM_CHAT_ID)
-        data: dict[str, Any] = {"chat_id": chat_id, "text": text[:4000]}
+        data: dict[str, Any] = {"chat_id": chat_id, "text": redact_paths(text)[:4000]}
         markup = keyboard(buttons)
         if markup:
             data["reply_markup"] = markup
@@ -85,7 +98,11 @@ class TelegramNotifier:
         import json
 
         chat_id = secrets.require_secret(secrets.TELEGRAM_CHAT_ID)
-        data = {"chat_id": chat_id, "caption": caption[:1000], "supports_streaming": "true"}
+        data = {
+            "chat_id": chat_id,
+            "caption": redact_paths(caption)[:1000],
+            "supports_streaming": "true",
+        }
         markup = keyboard(buttons)
         if markup:
             data["reply_markup"] = json.dumps(markup)
@@ -105,12 +122,12 @@ class RecordingNotifier:
     _next_id: int = 100
 
     def send_text(self, text: str, buttons: Buttons | None = None) -> int | None:
-        self.texts.append((text, buttons))
+        self.texts.append((redact_paths(text), buttons))
         self._next_id += 1
         return self._next_id
 
     def send_video(self, path: Path, caption: str, buttons: Buttons | None = None) -> int | None:
-        self.videos.append((Path(path), caption, buttons))
+        self.videos.append((Path(path), redact_paths(caption), buttons))
         self._next_id += 1
         return self._next_id
 

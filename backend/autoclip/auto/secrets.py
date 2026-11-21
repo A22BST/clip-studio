@@ -7,6 +7,7 @@ must never be printed, logged, stored in the database or put in an exception mes
 
 from __future__ import annotations
 
+import logging
 import os
 
 TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
@@ -50,3 +51,19 @@ def require_secret(name: str) -> str:
 
 def secret_is_set(name: str) -> bool:
     return get_secret(name) is not None
+
+
+#: Loggers that print full request URLs at INFO. The Telegram Bot API puts the TOKEN in the URL
+#: (``/bot<token>/sendMessage``), so these must never run below WARNING.
+_NOISY_LOGGERS = ("httpx", "httpcore")
+
+
+def harden_logging() -> None:
+    """Force httpx/httpcore to WARNING so a request URL (= the Telegram token) is never logged.
+
+    Called on import of the package and by the CLI / bots, so raising the root level to INFO or
+    DEBUG later cannot expose it. (A level set on the named logger wins over the root level.)"""
+    for name in _NOISY_LOGGERS:
+        logger = logging.getLogger(name)
+        if logger.level < logging.WARNING or logger.level == logging.NOTSET:
+            logger.setLevel(logging.WARNING)

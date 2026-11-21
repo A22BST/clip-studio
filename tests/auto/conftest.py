@@ -19,6 +19,12 @@ SIDECAR_YAML = "streamers: [teststreamer]\nactive: true\nsubmit_url: https://exa
 CHAT = "123"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_autoclip_home(tmp_path_factory, monkeypatch):
+    """Nothing in tests/auto may touch the real ~/.autoclip (approved copies, config, db)."""
+    monkeypatch.setenv("AUTOCLIP_HOME", str(tmp_path_factory.mktemp("autoclip_home")))
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOCLIP_HOME", str(tmp_path / "home"))

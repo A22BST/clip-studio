@@ -330,7 +330,11 @@ class Store:
         if n != 1:
             raise StoreError(f"clip {clip_id} is not awaiting approval")
 
-    def approve_clip(self, clip_id: int, approved_by: str, sha256: str) -> None:
+    def approve_clip(
+        self, clip_id: int, approved_by: str, sha256: str, path: str | None = None
+    ) -> None:
+        """Approve a previewed clip. ``path`` (optional) switches the clip to the immutable
+        ``approved/<sha>.mp4`` copy in the SAME transaction, so the posted file is the approved one."""
         if not approved_by.startswith(APPROVER_PREFIXES):
             raise StoreError("approved_by must be 'discord:<id>', 'telegram:<id>' or 'auto:level2'")
         with self._conn() as con:
@@ -343,8 +347,8 @@ class Store:
                 raise StoreError(f"clip {clip_id} changed since it was previewed: not approved")
             con.execute(
                 "UPDATE clips SET status='approved', approved_by=?, approved_sha256=?, "
-                "approved_at=?, updated_at=? WHERE id=?",
-                (approved_by, sha256, now_iso(), now_iso(), clip_id),
+                "approved_at=?, updated_at=?, path=COALESCE(?, path) WHERE id=?",
+                (approved_by, sha256, now_iso(), now_iso(), path, clip_id),
             )
         self.log_event("approve", f"clip {clip_id} by {approved_by}")
 
@@ -465,6 +469,12 @@ class Store:
                 self.mark_submitted(post["id"])
                 return post["id"]
         return None
+
+    def awaiting_submission(self) -> list[dict[str, Any]]:
+        """Posted posts that the campaign submission has not been logged for yet."""
+        return [
+            p for p in self.list_posts("posted") if not p["submitted_at"] and p["submit_deadline"]
+        ]
 
     def bump_reminders(self, post_id: int) -> None:
         with self._conn() as con:
