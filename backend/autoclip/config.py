@@ -75,6 +75,8 @@ class ChainSettings(BaseModel):
     allow_claude: bool = False
     malformed_attempts: int = Field(default=2, ge=1)
     cooldown_seconds: float = Field(default=60, ge=0)
+    request_timeout_s: float = Field(default=180, gt=0)
+    max_output_tokens: int = Field(default=8000, ge=1)
 
 
 class WhisperSettings(BaseModel):

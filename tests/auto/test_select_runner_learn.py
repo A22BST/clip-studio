@@ -248,7 +248,7 @@ def test_chain_selection_inlines_data_repairs_and_records(env, work, monkeypatch
     assert "Short hooks" in calls[0][1] and '"first_word": 100' in calls[0][1]
     assert "rate_per_1k_usd: 1.0" in calls[0][0]
     assert "NO tools" in calls[0][0] and "untrusted DATA" in calls[0][0]
-    assert calls[0][2] == {"json_mode": False}
+    assert calls[0][2] == {"json_mode": False, "max_tokens": 8000}
     assert json.loads((work / "selection_meta.json").read_text()) == {
         "provider": "free", "model": "test"
     }
@@ -281,3 +281,21 @@ def test_chain_selection_rejects_oversize_candidate_before_call(env, work, monke
     monkeypatch.setattr(select, "build_chain", lambda: pytest.fail("oversize must not call model"))
     with pytest.raises(select.SelectionError, match="No complete candidate fits"):
         select.run_selection(JOB, env.config)
+
+
+def test_chain_selection_surfaces_attempts(env, work, monkeypatch):
+    from autoclip.providers.base import ProviderError
+
+    attempts = [{"bucket": "free", "model": "test", "kind": "timeout"},
+                {"bucket": "other", "model": "next", "kind": "skipped:cooldown"}]
+
+    class FailedChain:
+        def complete_validated(self, *args, **kwargs):
+            raise ProviderError("No usable chain entries remain.", attempts=attempts)
+
+    env.config.selection.backend = "chain"
+    monkeypatch.setattr(select, "build_chain", FailedChain)
+    with pytest.raises(select.SelectionError) as caught:
+        select.run_selection(JOB, env.config)
+    assert caught.value.attempts == attempts
+    assert "free/test=timeout; other/next=skipped:cooldown" in str(caught.value)

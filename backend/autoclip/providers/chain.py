@@ -25,7 +25,7 @@ from .openai_provider import OpenAIProvider, _translate
 from .presets import PRESETS
 
 log = logging.getLogger(__name__)
-_COOLDOWNS: dict[str, float] = {}
+_COOLDOWNS: dict[str | tuple[str, str], float] = {}
 
 
 @dataclass(frozen=True)
@@ -232,21 +232,31 @@ class ChainProvider:
     def reject(self, result: ChainResult) -> None:
         self._bad[result] = self._bad.get(result, 0) + 1
 
-    def complete_text(self, system: str, user: str) -> tuple[str, ChainResult]:
+    def complete_text(
+        self, system: str, user: str, *, max_tokens: int | None = None
+    ) -> tuple[str, ChainResult]:
         """Plain text chat; caller owns schema validation."""
-        return asyncio.run(self._complete_text(system, user))
+        return asyncio.run(self._complete_text(system, user, max_tokens=max_tokens))
 
-    def complete_validated(self, system, user, validate, *, max_attempts=None):
+    def complete_validated(self, system, user, validate, *, max_attempts=None, max_tokens=None):
         """Repair malformed responses up to the per-model attempt limit."""
         limit = min(max_attempts or self.config.malformed_attempts, self.config.malformed_attempts)
         attempts = {}
         feedback = ""
+        diagnostics = []
         for _ in range(sum(len(e.models) for e in self.entries) * limit):
-            text, result = self.complete_text(system, user + feedback)
+            try:
+                text, result = self.complete_text(system, user + feedback, max_tokens=max_tokens)
+            except ProviderError as exc:
+                exc.attempts = diagnostics + exc.attempts
+                raise
+            diagnostics.extend(self._last_attempts)
             try:
                 validate(text)
                 return text, result
             except ValueError as exc:
+                diagnostics.append({"bucket": result.provider, "model": result.model,
+                                    "kind": "malformed"})
                 self.reject(result)
                 attempts[result] = attempts.get(result, 0) + 1
                 if attempts[result] >= limit:
@@ -256,39 +266,58 @@ class ChainProvider:
                     + str(exc)[:2000]
                     + "\nReturn only corrected JSON. No prose or code fences."
                 )
-        raise ProviderError("All chain replies failed validation.", kind="malformed")
+        raise ProviderError("All chain replies failed validation.", kind="malformed",
+                            attempts=diagnostics)
 
-    async def _complete_text(self, system: str, user: str) -> tuple[str, ChainResult]:
+    async def _complete_text(
+        self, system: str, user: str, *, max_tokens: int | None = None
+    ) -> tuple[str, ChainResult]:
+        self._last_attempts = attempts = []
+
+        def record(entry, kind, models=None):
+            attempts.extend({"bucket": entry.name, "model": model, "kind": kind}
+                            for model in (entry.models if models is None else models))
+
         for entry in self.entries:
             identity = _identity(entry)
             local = entry.name.lower() == "ollama"
             prompt_tokens = (len(system) + len(user) + 3) // 4
             if entry.max_prompt_tokens and prompt_tokens > entry.max_prompt_tokens:
                 log.info("Skipping chain bucket %s: prompt exceeds token guard", entry.name)
+                record(entry, "skipped:token_guard")
                 continue
             if _COOLDOWNS.get(identity, 0) > time.monotonic():
                 log.info("Skipping chain bucket %s during cooldown", entry.name)
+                record(entry, "skipped:cooldown")
                 continue
             if local and not gpu_idle():
                 log.info("Skipping ollama: GPU busy or idle state unknown")
+                record(entry, "skipped:gpu_busy")
                 continue
             key = None if local else get_secret(entry.key_name, self.settings)
             if not local and not key:
                 log.info("Skipping chain bucket %s: add key %s", entry.name, entry.key_name)
+                record(entry, "skipped:no_key")
                 continue
             base_url = entry.base_url
             if base_url and "{account_id}" in base_url:
                 account_id = get_secret("cloudflare-account-id", self.settings)
                 if not account_id:
                     log.info("Skipping chain bucket %s: add cloudflare-account-id", entry.name)
+                    record(entry, "skipped:no_key")
                     continue
                 base_url = base_url.replace("{account_id}", account_id)
-            for model in entry.models:
+            for idx, model in enumerate(entry.models):
                 result = ChainResult(entry.name, model)
                 if self._bad.get(result, 0) >= self.config.malformed_attempts:
+                    record(entry, "skipped:malformed", [model])
+                    continue
+                if _COOLDOWNS.get((identity, model), 0) > time.monotonic():
+                    record(entry, "skipped:cooldown", [model])
                     continue
                 if not usage(entry, reserve=True)["allowed"]:
                     log.info("Skipping chain bucket %s: daily budget spent", entry.name)
+                    record(entry, "skipped:daily_budget", entry.models[idx:])
                     break
                 cls = (
                     OllamaProvider
@@ -297,10 +326,17 @@ class ChainProvider:
                     if entry.name.lower() in {"anthropic", "claude"}
                     else _AccountOpenAIProvider
                 )
-                provider_kwargs = {"usage_entry": entry} if cls is _AccountOpenAIProvider else {}
+                provider_kwargs = (
+                    {"usage_entry": entry, "request_timeout_s": self.config.request_timeout_s}
+                    if cls is _AccountOpenAIProvider else {}
+                )
                 provider = cls(model, api_key=key, base_url=base_url, **provider_kwargs)
                 try:
                     kwargs = {} if local else {"json_mode": False}
+                    if cls is _AccountOpenAIProvider:
+                        kwargs["max_tokens"] = (
+                            max_tokens if max_tokens is not None else self.config.max_output_tokens
+                        )
                     text = await provider._complete(system, user, DetectionConfig(), **kwargs)
                 except ProviderError as exc:
                     kind = exc.kind
@@ -315,31 +351,35 @@ class ChainProvider:
                         kind = _translate(exc, entry.name, model).kind
                     if kind == "unknown" and "returned no choices" in str(exc):
                         kind = "malformed"
-                    if kind in {"model", "malformed"}:
+                    record(entry, kind, [model])
+                    if kind in {"model", "malformed", "empty"}:
                         self._bad[result] = self.config.malformed_attempts
                         continue
-                    if kind not in {"rate_limit", "quota", "connection", "timeout", "auth"}:
-                        raise
-                    if kind in {"rate_limit", "quota"}:
-                        if _daily_quota(exc):
-                            usage(entry, spent=True)
-                        else:
-                            _COOLDOWNS[identity] = time.monotonic() + self.config.cooldown_seconds
-                    if kind == "auth":
-                        log.warning(
-                            "Chain bucket %s rejected authentication; add key %s",
-                            entry.name,
-                            entry.key_name,
-                        )
-                    else:
-                        log.info("Skipping chain bucket %s: %s", entry.name, kind)
-                    break
+                    if kind == "unknown":
+                        raise ProviderError("Chain request failed.", kind=kind,
+                                            attempts=attempts) from exc
+                    cooldown_until = time.monotonic() + self.config.cooldown_seconds
+                    if kind in {"rate_limit", "quota", "auth"}:
+                        if kind == "auth" or _daily_quota(exc):
+                            if kind != "auth":
+                                usage(entry, spent=True)
+                            else:
+                                _COOLDOWNS[identity] = cooldown_until
+                                log.warning("Chain bucket %s rejected authentication; add key %s",
+                                            entry.name, entry.key_name)
+                            reason = "auth" if kind == "auth" else "daily_budget"
+                            record(entry, f"skipped:{reason}", entry.models[idx + 1:])
+                            break
+                        _COOLDOWNS[(identity, model)] = cooldown_until
+                    continue
                 if not text.strip():
+                    record(entry, "empty", [model])
                     self._bad[result] = self.config.malformed_attempts
                     continue
                 log.info("Chain response from %s model %s", result.provider, result.model)
                 return text, result
-        raise ProviderError("No usable chain entries remain.", provider="chain", kind="exhausted")
+        raise ProviderError("No usable chain entries remain.", provider="chain", kind="exhausted",
+                            attempts=attempts)
 
 
 def build_chain(settings: Settings | None = None) -> ChainProvider:

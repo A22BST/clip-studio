@@ -38,15 +38,21 @@ class ProviderError(RuntimeError):
     """A provider could not produce a usable response."""
 
     def __init__(
-        self, message: str, *, provider: str = "", hint: str = "", kind: str = "unknown"
+        self, message: str, *, provider: str = "", hint: str = "", kind: str = "unknown",
+        attempts: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
         self.hint = hint
         self.kind = kind
+        self.attempts = list(attempts or [])
 
     def __str__(self) -> str:
         base = super().__str__()
+        if self.attempts:
+            base += " Attempts: " + "; ".join(
+                f"{a['bucket']}/{a['model']}={a['kind']}" for a in self.attempts
+            )
         return f"{base}\n\n{self.hint}" if self.hint else base
 
 

@@ -243,3 +243,24 @@ Plan decided by Ahmad in the CoWorkOS chat (free LLMs by default; Claude and Cod
 - Known: `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire` fails on main too (clock-dependent, not touched).
 - 21 Nov (free-model chain build session): free-model chain built on branch `claude/free-model-chain-0660c4`, mocked tests only, selection default
   still `claude` pending the comparison; see section "Free-model chain". Not pushed or merged.
+
+### Selection comparison, first live run (21 Nov, 2 jobs, small sample)
+Jobs: KreekCraft Day 2 `05a6dc5ea9164c73` (ceiling 30%: only that share of the top-10 viewer clips lies inside any candidate window) and Day 3
+`11f5c9fb80be4f45` (ceiling 50%, offset 6000 s). Recall = top-10 viewer clips touched by a pick; precision = picks touching one. Free keys live-tested.
+| Target | Day 2 recall/prec | Day 3 recall/prec |
+|---|---|---|
+| Claude sonnet (`claude -p`) | 0% / 0% | 20% / 40% |
+| google gemini-3.6-flash | 0% / 0% | 40% / 60% |
+| google gemini-3.5-flash-lite (2 picks only) | 0% / 0% | 20% / 100% |
+| openrouter nemotron-3-ultra-550b | 0% / 0% | 30% / 38% |
+| openrouter nemotron-3.5-super-vl | 0% / 0% | failed |
+| cloudflare gpt-oss-120b | 0% / 0% | 20% / 40% |
+| cloudflare gpt-oss-20b | 10% / 20% | 0% / 0% |
+Reading: one or two hits per job, so these numbers do not separate the models yet; the free models that worked are in the same range as Claude.
+Failures (kinds from the new per-model `Attempts`): groq all three = prompt over the 8K-TPM guard (Groq is for small prompts only, e.g. the weekly
+report); z.ai and openrouter gemma/ling = rate_limit or overload (transient); gemini-3.8-flash = connection/503; several = malformed or empty
+output (reasoning models); nvidia minimax = timeout/empty. Retired and removed from presets: nvidia deepseek-v4-flash, moonshot kimi-k3 (410),
+cloudflare nemotron-3-120b. All working free models stay in the chain (Ahmad: free capacity); the comparison only sets ORDER.
+Proposed order for selection (not applied, selection default still `claude`): google gemini-3.6-flash, cloudflare gpt-oss-120b, openrouter nemotron-3-ultra,
+google gemini-3.5-flash-lite, openrouter nemotron-3.5-super-vl, cloudflare gpt-oss-20b, then z.ai, nvidia, openrouter rest, google 3.8; groq last (learn only).
+Next: more jobs (Day 1, other streamers) before trusting the order; run `scripts/selection_compare.py --jobs JOB:VOD:OFFSET ... --claude`.

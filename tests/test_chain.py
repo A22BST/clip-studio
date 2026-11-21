@@ -159,16 +159,19 @@ async def test_plain_chat_has_no_tools_or_json_format(monkeypatch):
             choices=[SimpleNamespace(message=SimpleNamespace(content="report"))]
         )
     )
-    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                             close=AsyncMock())
     monkeypatch.setattr(OpenAIProvider, "_client", lambda self: client)
     provider = OpenAIProvider("test", api_key="fake")
     assert await provider._complete("s", "u", DetectionConfig(), json_mode=False) == "report"
-    assert set(create.call_args.kwargs) == {"model", "temperature", "messages"}
+    assert set(create.call_args.kwargs) == {"model", "temperature", "messages", "max_tokens"}
+    assert create.call_args.kwargs["max_tokens"] == 8000
+    client.close.assert_awaited_once()
 
 
 def test_unknown_error_is_not_silently_masked(monkeypatch):
     monkeypatch.setattr(OpenAIProvider, "_complete", AsyncMock(side_effect=ProviderError("bad")))
-    with pytest.raises(ProviderError, match="bad"):
+    with pytest.raises(ProviderError, match="first/a=unknown"):
         chain.ChainProvider(settings()).complete_text("s", "u")
 
 
@@ -281,7 +284,7 @@ def test_malformed_validation_uses_next_model(monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["rate_limit", "quota", "auth", "connection", "timeout"])
-def test_account_failure_skips_remaining_models(monkeypatch, kind):
+def test_only_auth_failure_skips_remaining_models(monkeypatch, kind):
     seen = []
 
     async def complete(self, *a, **k):
@@ -292,9 +295,11 @@ def test_account_failure_skips_remaining_models(monkeypatch, kind):
 
     monkeypatch.setattr(OpenAIProvider, "_complete", complete)
     provider = chain.ChainProvider(bucket_settings())
-    assert provider.complete_text("s", "u")[1].provider == "second"
-    assert seen == ["heavy", "b"]
-    assert chain.usage(provider.entries[0])["used"] == 1
+    assert provider.complete_text("s", "u")[1].provider == (
+        "second" if kind == "auth" else "first"
+    )
+    assert seen == (["heavy", "b"] if kind == "auth" else ["heavy", "small"])
+    assert chain.usage(provider.entries[0])["used"] == (1 if kind == "auth" else 2)
 
 
 @pytest.mark.parametrize(
@@ -344,7 +349,7 @@ def test_quota_spent_only_for_daily_failure(monkeypatch, daily):
     assert chain.usage(provider.entries[0])["spent"] is daily
     clock[0] += 61
     chain.ChainProvider(conf).complete_text("s", "u")
-    assert seen == (["heavy", "b", "b"] if daily else ["heavy", "b", "heavy", "b"])
+    assert seen == (["heavy", "b", "b"] if daily else ["heavy", "small", "heavy", "small"])
 
 
 def test_failed_model_call_spends_last_daily_request(monkeypatch):
@@ -554,7 +559,8 @@ def test_adapter_retry_counts_each_http_attempt(monkeypatch, budget):
             else [response]
         )
         creates[self.model] = create
-        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                             close=AsyncMock())
 
     monkeypatch.setattr(OpenAIProvider, "_client", client)
     provider = chain.ChainProvider(bucket_settings(daily_requests=budget))
@@ -580,3 +586,145 @@ def test_local_native_connection_errors_allow_last_claude(monkeypatch, timeout):
     monkeypatch.setattr(chain.OllamaProvider, "_complete", complete)
     monkeypatch.setattr(chain.AnthropicProvider, "_complete", AsyncMock(return_value="ok"))
     assert chain.ChainProvider(conf).complete_text("s", "u")[1].provider == "anthropic"
+
+
+@pytest.mark.parametrize(
+    "reason", ["token_guard", "no_key", "gpu_busy", "daily_budget", "cooldown"]
+)
+def test_exhausted_records_every_skipped_model(monkeypatch, reason):
+    conf = bucket_settings()
+    conf.chain.entries = conf.chain.entries[:1]
+    monkeypatch.setattr(
+        OpenAIProvider, "_complete", AsyncMock(side_effect=AssertionError("no call"))
+    )
+    if reason == "token_guard":
+        conf.chain.entries[0].max_prompt_tokens = 1
+    elif reason == "no_key":
+        monkeypatch.setattr(chain, "get_secret", lambda *a: None)
+    elif reason == "gpu_busy":
+        conf.chain.entries[0].name = "ollama"
+        monkeypatch.setattr(chain, "gpu_idle", lambda: False)
+    elif reason == "daily_budget":
+        conf.chain.entries[0].daily_requests = 0
+    provider = chain.ChainProvider(conf)
+    if reason == "cooldown":
+        chain._COOLDOWNS[chain._identity(provider.entries[0])] = float("inf")
+    with pytest.raises(ProviderError) as caught:
+        provider.complete_text("long prompt", "long prompt")
+    assert caught.value.attempts == [
+        {"bucket": provider.entries[0].name, "model": model, "kind": f"skipped:{reason}"}
+        for model in ("heavy", "small")
+    ]
+    assert f"heavy=skipped:{reason}" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "kind", ["rate_limit", "quota", "timeout", "connection", "auth", "model", "malformed", "empty"]
+)
+def test_exhausted_records_safe_failure_kinds(monkeypatch, kind):
+    conf = settings()
+    conf.chain.entries = conf.chain.entries[:1]
+    monkeypatch.setattr(OpenAIProvider, "_complete", AsyncMock(
+        side_effect=ProviderError("SECRET upstream text", kind=kind)))
+    with pytest.raises(ProviderError) as caught:
+        chain.ChainProvider(conf).complete_text("s", "u")
+    assert caught.value.attempts == [{"bucket": "first", "model": "a", "kind": kind}]
+    assert f"first/a={kind}" in str(caught.value)
+    assert "SECRET" not in str(caught.value)
+
+
+def test_validation_exhaustion_keeps_prior_attempts(monkeypatch):
+    conf = settings(malformed_attempts=1)
+    monkeypatch.setattr(OpenAIProvider, "_complete", AsyncMock(return_value="invalid JSON"))
+    with pytest.raises(ProviderError) as caught:
+        chain.ChainProvider(conf).complete_validated("s", "u", json.loads)
+    assert caught.value.attempts == [
+        {"bucket": "first", "model": "a", "kind": "malformed"},
+        {"bucket": "first", "model": "a", "kind": "skipped:malformed"},
+        {"bucket": "second", "model": "b", "kind": "malformed"},
+    ]
+
+
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+@pytest.mark.parametrize("content", [None, "", "   "])
+def test_reasoning_only_tries_next_model_and_closes(monkeypatch, reasoning_field, content):
+    clients = []
+
+    def client(self):
+        message = SimpleNamespace(content=content if self.model == "heavy" else "answer")
+        setattr(message, reasoning_field, "PRIVATE REASONING")
+        obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+            create=AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=message)])))),
+            close=AsyncMock())
+        clients.append(obj)
+        return obj
+
+    monkeypatch.setattr(OpenAIProvider, "_client", client)
+    provider = chain.ChainProvider(bucket_settings())
+    assert provider.complete_text("s", "u")[0] == "answer"
+    assert provider._last_attempts == [{"bucket": "first", "model": "heavy", "kind": "empty"}]
+    for obj in clients:
+        obj.close.assert_awaited_once()
+
+
+def test_model_cooldown_does_not_block_sibling_across_instances(monkeypatch):
+    seen = []
+
+    async def complete(self, *a, **k):
+        seen.append(self.model)
+        if self.model == "heavy":
+            raise ProviderError("overload", kind="rate_limit")
+        return "ok"
+
+    monkeypatch.setattr(OpenAIProvider, "_complete", complete)
+    for _ in range(2):
+        provider = chain.ChainProvider(bucket_settings())
+        assert provider.complete_text("s", "u")[1].model == "small"
+    assert seen == ["heavy", "small", "small"]
+    assert provider._last_attempts[0]["kind"] == "skipped:cooldown"
+
+
+@pytest.mark.parametrize("override", [None, 1234])
+def test_chain_timeout_and_output_settings_reach_sdk(monkeypatch, override):
+    import openai
+
+    clients = []
+    options = []
+    creates = []
+
+    def client(**kwargs):
+        options.append(kwargs)
+        obj = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+            create=AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content="ok"))])))), close=AsyncMock())
+        clients.append(obj)
+        creates.append(obj.chat.completions.create)
+        return obj
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", client)
+    provider = chain.ChainProvider(settings(request_timeout_s=240, max_output_tokens=9000))
+    provider.complete_text("s", "u", max_tokens=override)
+    assert options[0]["timeout"] == 240
+    assert options[0]["max_retries"] == 0
+    assert creates[0].call_args.kwargs["max_tokens"] == (override or 9000)
+    clients[0].close.assert_awaited_once()
+    assert Settings().chain.request_timeout_s == 180
+    assert Settings().chain.max_output_tokens == 8000
+    assert Settings().chain.cooldown_seconds == 60
+
+
+async def test_failed_sdk_call_closes_client(monkeypatch):
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=TimeoutError("PRIVATE")))), close=AsyncMock())
+    monkeypatch.setattr(OpenAIProvider, "_client", lambda self: client)
+    with pytest.raises(ProviderError, match="timeout"):
+        await OpenAIProvider("test", api_key="fake")._complete("s", "u", DetectionConfig())
+    client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("status,detail,kind", [(503, "PRIVATE", "connection"),
+                                              (429, "1305 overloaded", "rate_limit")])
+def test_transient_status_translation(status, detail, kind):
+    error = Exception(detail)
+    error.status_code = status
+    assert _translate(error, "test", "model").kind == kind

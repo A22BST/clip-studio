@@ -211,6 +211,8 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
             system, user, validate, max_attempts=config.selection.max_attempts
         )
     except ProviderError as exc:
-        raise SelectionError("Chain selection failed: " + str(exc)) from exc
+        error = SelectionError("Chain selection failed: " + str(exc))
+        error.attempts = exc.attempts
+        raise error from exc
     _save_meta(work, result)
     return out

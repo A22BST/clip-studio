@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+import httpx
+
 from .base import DetectionConfig, LLMProvider, ProviderError, ProviderStatus
 
 log = logging.getLogger(__name__)
@@ -37,8 +39,10 @@ class OpenAIProvider(LLMProvider):
     name = "openai"
     requires_key = True
 
-    def __init__(self, model: str = "", *, api_key: str | None = None, base_url: str | None = None):
+    def __init__(self, model: str = "", *, api_key: str | None = None, base_url: str | None = None,
+                 request_timeout_s: float = 180):
         super().__init__(model or DEFAULT_MODEL, api_key=api_key, base_url=base_url)
+        self.request_timeout_s = request_timeout_s
 
     def _client(self):
         try:
@@ -59,7 +63,7 @@ class OpenAIProvider(LLMProvider):
         kwargs = {"api_key": key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        return AsyncOpenAI(**kwargs, max_retries=0, timeout=60.0)
+        return AsyncOpenAI(**kwargs, max_retries=0, timeout=self.request_timeout_s)
 
     def _is_local(self) -> bool:
         return bool(self.base_url) and (
@@ -67,7 +71,8 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def _complete(
-        self, system: str, user: str, config: DetectionConfig, *, json_mode: bool = True
+        self, system: str, user: str, config: DetectionConfig, *, json_mode: bool = True,
+        max_tokens: int | None = None,
     ) -> str:
         client = self._client()
         request = {
@@ -78,26 +83,38 @@ class OpenAIProvider(LLMProvider):
                 {"role": "user", "content": user},
             ],
         }
-        # Only OpenAI's own endpoint reliably honours this; other vendors 400 on
-        # it, so a failed request is retried once without it.
+        if not json_mode:
+            request["max_tokens"] = max_tokens if max_tokens is not None else 8000
         try:
-            response = await client.chat.completions.create(
-                **request, **({"response_format": {"type": "json_object"}} if json_mode else {})
-            )
-        except Exception as exc:
-            if _is_unsupported_parameter(exc):
-                log.debug("Endpoint rejected response_format; retrying without it.")
-                try:
-                    response = await client.chat.completions.create(**request)
-                except Exception as retry_exc:
-                    raise _translate(retry_exc, self.name, self.model) from retry_exc
-            else:
-                raise _translate(exc, self.name, self.model) from exc
+            # Only OpenAI's own endpoint reliably honours this; other vendors 400 on
+            # it, so a failed request is retried once without it.
+            try:
+                response = await client.chat.completions.create(
+                    **request, **({"response_format": {"type": "json_object"}} if json_mode else {})
+                )
+            except Exception as exc:
+                if _is_unsupported_parameter(exc):
+                    log.debug("Endpoint rejected response_format; retrying without it.")
+                    try:
+                        response = await client.chat.completions.create(**request)
+                    except Exception as retry_exc:
+                        raise _translate(retry_exc, self.name, self.model) from retry_exc
+                else:
+                    raise _translate(exc, self.name, self.model) from exc
 
-        choices = response.choices or []
-        if not choices:
-            raise ProviderError("The endpoint returned no choices.", provider=self.name)
-        return choices[0].message.content or ""
+            choices = response.choices or []
+            if not choices:
+                raise ProviderError(
+                    "The endpoint returned no choices.", provider=self.name, kind="malformed"
+                )
+            content = choices[0].message.content or ""
+            if not content.strip():
+                raise ProviderError("The endpoint returned empty content.",
+                                    provider=self.name, kind="empty")
+            return content
+
+        finally:
+            await client.close()
 
     async def health_check(self) -> ProviderStatus:
         if not self.api_key and not self._is_local():
@@ -106,7 +123,10 @@ class OpenAIProvider(LLMProvider):
             )
         try:
             client = self._client()
-            models = await client.models.list()
+            try:
+                models = await client.models.list()
+            finally:
+                await client.close()
             names = sorted(m.id for m in models.data)[:50]
         except Exception as exc:
             return ProviderStatus(name=self.name, available=False, detail=str(exc)[:200])
@@ -141,11 +161,17 @@ def _translate(exc: Exception, provider: str, model: str) -> ProviderError:
         kind = "auth"
     elif any(x in lowered for x in ("quota", "billing", "credit", "insufficient_quota")):
         kind = "quota"
-    elif status == 429 or "429" in lowered or "rate limit" in lowered:
+    elif status == 429 or any(x in lowered for x in ("429", "rate limit", "overloaded", "1305")):
         kind = "rate_limit"
-    elif isinstance(exc, TimeoutError) or any(x in lowered for x in ("timeout", "timed out")):
+    elif isinstance(exc, (TimeoutError, httpx.TimeoutException)) or any(
+        x in lowered for x in ("timeout", "timed out")
+    ):
         kind = "timeout"
-    elif isinstance(exc, ConnectionError) or "connect" in lowered:
+    elif (
+        status in (500, 502, 503, 504)
+        or isinstance(exc, (ConnectionError, httpx.ConnectError))
+        or "connect" in lowered
+    ):
         kind = "connection"
     elif status == 404 or "404" in lowered or "model_not_found" in lowered:
         kind = "model"

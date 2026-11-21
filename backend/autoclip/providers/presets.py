@@ -14,12 +14,11 @@ PRESETS = {
     "nvidia-nim": {
         "base_url": "https://integrate.api.nvidia.com/v1",
         "models": [
-            "deepseek-ai/deepseek-v4-flash",
-            "moonshotai/kimi-k3",
             "minimaxai/minimax-m3.1-flash",
         ],
-        "notes": "Trial service; limits/credits not published on pages read. DeepSeek/Kimi IDs "
-        "inferred from slugs; MiniMax research/dev licence. Trial terms PDF not read.",
+        "notes": "Trial service; limits/credits not published on pages read. DeepSeek v4 flash "
+        "and Kimi k3 returned 410 on live calls (removed 2026-11-21). "
+        "MiniMax research/dev licence. Trial terms PDF not read.",
     },
     "openrouter-free": {
         "base_url": "https://openrouter.ai/api/v1",
@@ -50,7 +49,6 @@ PRESETS = {
         "models": [
             "@cf/openai/gpt-oss-120b",
             "@cf/google/gemma-4-26b-a4b-it",
-            "@cf/nvidia/nemotron-3-120b-a12b",
             "@cf/openai/gpt-oss-20b",
         ],
         "notes": "Requires cloudflare-account-id and Workers AI Read+Edit token. 10000 neurons "
