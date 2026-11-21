@@ -48,3 +48,7 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# Campaign overlays are the streamers' assets: keep them local, never in this public repo
+campaigns/assets/*
+!campaigns/assets/placeholder-logo.png
