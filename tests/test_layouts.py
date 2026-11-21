@@ -42,17 +42,16 @@ def test_camera_geometry(rect: Rect, block_h: int) -> None:
     crop = camera_crop(rect, 1920, 1080, 1080, block_h)
     assert crop.x >= 0 and crop.y >= 0
     assert crop.x + crop.w <= 1920 and crop.y + crop.h <= 1080
-    assert abs(crop.w - crop.h * 1080 / block_h) <= max(1, 1080 / block_h)
-    assert crop.x <= max(0, rect.x - rect.w * 0.1)
-    assert crop.y <= max(0, rect.y - rect.h * 0.1)
-    assert crop.x + crop.w >= min(1920, rect.x + rect.w * 1.1)
-    assert crop.y + crop.h >= min(1080, rect.y + rect.h * 1.1)
+    assert crop.w * block_h == crop.h * 1080
+    assert crop.x <= rect.x and crop.y <= rect.y
+    assert crop.x + crop.w >= rect.x + rect.w
+    assert crop.y + crop.h >= rect.y + rect.h
 
 
 def test_plan_json_roundtrip() -> None:
-    for layout, fraction in [(Layout.FACECAM, 0.38), (Layout.REACTION, 0.65)]:
+    for layout, fraction in [(Layout.FACECAM, 0.30), (Layout.REACTION, 0.30)]:
         windows = [BlurWindow(0.5, 1.0)]
-        plan = default_plan(layout, Rect(0, 0, 200, 150), windows)
+        plan = default_plan(layout, Rect(0, 0, 200, 150), windows, face_crop=Rect(30, 20, 100, 100))
         assert plan.cam_fraction == plan.seam_y_frac == fraction
         assert LayoutPlan.from_dict(json.loads(json.dumps(plan.to_dict()))) == plan
         windows.clear()
@@ -72,9 +71,10 @@ def test_small_overlay_stays_tight_on_720p_source() -> None:
     assert crop.w < 500 and crop.h < 350
 
 
-def test_impossible_camera_geometry_is_explicit() -> None:
-    with pytest.raises(ValueError, match="cannot fit"):
-        camera_crop(Rect(0, 0, 1920, 1080), 1920, 1080, 1080, 1248)
+@pytest.mark.parametrize("rect", [Rect(-1, 0, 100, 100), Rect(0, 0, 1921, 1080), Rect(0, 0, 0, 1)])
+def test_invalid_camera_geometry_is_explicit(rect: Rect) -> None:
+    with pytest.raises(ValueError):
+        camera_crop(rect, 1920, 1080, 1080, 1248)
 
 
 def observation(t: float, cx: float = 160, size: float = 100) -> FaceObservation:
@@ -238,6 +238,7 @@ def test_real_layout_pixels(layout_source: Path, tmp_path: Path, layout: Layout)
     outside, inside, after = [read_frame(destination, t) for t in (0.15, 0.5, 1.1)]
     seam = round(1920 * plan.cam_fraction / 2) * 2
     camera = outside[:seam]
+    # Cover-fit uses real source pixels across the entire panel.
     red = (camera[:, :, 0] > 200) & (camera[:, :, 1] < 40) & (camera[:, :, 2] < 40)
     assert red.mean() > 0.95
     assert outside[seam + 20 :].std() > 50
@@ -263,7 +264,7 @@ def test_layout_captions_centre_on_seam(layout_source: Path, tmp_path: Path) -> 
         request, work_dir=tmp_path / "work", settings=ExportSettings(prefer_hardware_encoder=False)
     )
     ass = (tmp_path / "work" / "captions" / "captions.ass").read_text(encoding="utf-8")
-    assert r"{\an5\pos(540,730)}" in ass
+    assert r"{\an5\pos(540,576)}" in ass
     assert export.build_video_filtergraph(request, subtitle_name="captions.ass").endswith(
         "[vlay]ass=filename=captions.ass:fontsdir=fonts[vout]"
     )
@@ -294,3 +295,115 @@ def test_custom_labels_and_fraction() -> None:
     )
     assert graph.startswith("[input]") and graph.endswith("[done]")
     assert "scale=1080:960" in graph
+
+
+@pytest.mark.parametrize(
+    "webcam,face",
+    [
+        (Rect(0, 40, 280, 300), Rect(80, 160, 100, 100)),
+        (Rect(1000, 400, 280, 300), Rect(1080, 520, 100, 100)),
+        (Rect(0, 0, 400, 300), Rect(100, 90, 100, 100)),
+    ],
+)
+@pytest.mark.parametrize("panel_h", [576, 960, 1248])
+def test_webcam_geometry_retains_head_and_fills_panel(
+    webcam: Rect, face: Rect, panel_h: int
+) -> None:
+    clean = facecam.tight_face_crop(face, webcam, face.y + 30)
+    crop = camera_crop(clean, 1920, 1080, 1080, panel_h)
+    assert crop.w * panel_h == crop.h * 1080
+    assert face.x >= crop.x and face.y >= crop.y
+    assert face.x + face.w <= crop.x + crop.w
+    assert face.y + face.h <= crop.y + crop.h
+    assert face.y - crop.y >= crop.h * 0.12
+    assert webcam.w / crop.w <= 1.4
+    assert webcam.h / crop.h <= 1.4
+
+
+def test_overlay_removal_is_edge_trimming_without_face_zoom() -> None:
+    webcam = Rect(0, 40, 400, 300)
+    clean = facecam.trim_webcam_edges(webcam)
+    assert clean == Rect(8, 76, 384, 228)
+    assert clean.y + clean.h < webcam.y + webcam.h
+    assert facecam.tight_face_crop(Rect(100, 150, 100, 100), webcam, 180) == clean
+    assert facecam.tight_face_crop(Rect(140, 150, 90, 90), webcam, 180) == clean
+    with pytest.raises(ValueError):
+        facecam.trim_webcam_edges(webcam, bottom=0.4)
+
+
+def test_detector_preserves_webcam_context(
+    monkeypatch: pytest.MonkeyPatch, detector_mocks: Rect
+) -> None:
+    monkeypatch.setattr(facecam, "_corner_faces", lambda *args: [observation(i) for i in range(8)])
+    geometry = facecam.detect_facecam_geometry(Path("source.mp4"), 0, 8)
+    assert geometry is not None
+    assert geometry.webcam == detector_mocks
+    assert geometry.face_crop == facecam.trim_webcam_edges(geometry.webcam)
+
+
+@pytest.mark.parametrize("layout", [Layout.FACECAM, Layout.REACTION])
+def test_mask_uses_full_webcam_before_gameplay_scaling(layout: Layout) -> None:
+    plan = default_plan(layout, Rect(0, 200, 500, 400), face_crop=Rect(50, 250, 150, 140))
+    graph = build_layout_filtergraph(plan, src_w=1920, src_h=1080, out_w=1080, out_h=1920)
+    crop = camera_crop(plan.face_crop, 1920, 1080, 1080, 576)
+    assert f"crop={crop.w}:{crop.h}:{crop.x}:{crop.y}:exact=1" in graph
+    assert "pad=" not in graph
+    assert "force_original_aspect_ratio=increase" in graph
+    assert "[lgsrc]drawbox=x=0:y=200:w=500:h=400:color=black:t=fill,scale=" in graph
+    assert default_plan(layout, plan.cam, cam_fraction=0.4).cam_fraction == 0.4
+
+
+def test_legacy_plan_without_face_crop() -> None:
+    plan = LayoutPlan.from_dict(
+        {"layout": "facecam", "cam": {"x": 0, "y": 0, "w": 100, "h": 100}, "cam_fraction": 0.38}
+    )
+    assert plan.face_crop is None
+    assert plan.cam_fraction == 0.38
+
+
+@pytest.mark.parametrize("layout", [Layout.FACECAM, Layout.REACTION])
+def test_render_masks_duplicate_camera_and_preserves_logo(layout: Layout) -> None:
+    # The central source webcam remains visible in both gameplay cover crops;
+    # a missing mask would leave a bright red duplicate in the lower panel.
+    plan = default_plan(layout, Rect(240, 60, 160, 180), face_crop=Rect(260, 80, 100, 140))
+    graph = build_layout_filtergraph(
+        plan, src_w=640, src_h=360, out_w=360, out_h=640, output_label="[vout]"
+    )
+    graph = export._add_overlay(graph, 360, 640)
+    result = subprocess.run(
+        [
+            ffmpeg.ffmpeg_path(),
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:s=640x360:d=1,drawbox=x=240:y=60:w=160:h=180:color=red:t=fill",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=yellow:s=100x40:d=1",
+            "-filter_complex",
+            graph,
+            "-map",
+            "[vout]",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    pixels = np.frombuffer(result.stdout, dtype=np.uint8).reshape(640, 360, 3)
+    seam = round(640 * plan.cam_fraction / 2) * 2
+    game = pixels[seam:]
+    red = (game[:, :, 0] > 200) & (game[:, :, 1] < 40) & (game[:, :, 2] < 40)
+    assert not red.any()
+    assert pixels[seam // 2, 180, 0] > 200
+    # Logo is applied after composition at x=4%, y=25%, independently of seam.
+    logo = pixels[165:185, 20:90]
+    assert ((logo[:, :, 0] > 200) & (logo[:, :, 1] > 200) & (logo[:, :, 2] < 40)).mean() > 0.95

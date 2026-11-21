@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -16,13 +17,65 @@ from .reframe.faces import FaceDetectionUnavailable, FaceObservation
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class FacecamGeometry:
+    webcam: Rect
+    face_crop: Rect
+
+
+def trim_webcam_edges(
+    webcam: Rect,
+    *,
+    left: float = 0.02,
+    top: float = 0.12,
+    right: float = 0.02,
+    bottom: float = 0.12,
+) -> Rect:
+    """Remove border/counter strips, independently of face position or size."""
+    margins = (left, top, right, bottom)
+    if (
+        min(webcam.w, webcam.h) <= 0
+        or any(not math.isfinite(v) or v < 0 for v in margins)
+        or left + right >= 1
+        or top + bottom >= 1
+    ):
+        raise ValueError("Invalid webcam edge trims.")
+    x = webcam.x + math.floor(webcam.w * left)
+    y = webcam.y + math.floor(webcam.h * top)
+    end_x = webcam.x + webcam.w - math.floor(webcam.w * right)
+    end_y = webcam.y + webcam.h - math.floor(webcam.h * bottom)
+    if end_x - x < webcam.w / 1.4 or end_y - y < webcam.h / 1.4:
+        raise ValueError("Edge trims must retain at least 1/1.4 of each dimension.")
+    return Rect(x, y, end_x - x, end_y - y)
+
+
+def tight_face_crop(face: Rect, webcam: Rect, eye_y: float) -> Rect:
+    """Compatibility name: retain the webcam, trimming only overlay edges.
+
+    Facial landmarks exclude hair and hats. Reserve generous space above them
+    rather than deriving a zoomed portrait from the eye line.
+    """
+    crop = trim_webcam_edges(webcam)
+    if not math.isfinite(eye_y) or not face.y <= eye_y <= face.y + face.h:
+        raise ValueError("Eyes must be inside the face.")
+    if min(face.w, face.h) <= 0 or not (
+        crop.x <= face.x
+        and crop.y <= face.y
+        and face.x + face.w <= crop.x + crop.w
+        and face.y + face.h <= crop.y + crop.h
+        and face.y - crop.y >= crop.h * 0.12
+    ):
+        raise ValueError("Trimmed webcam cannot retain the face and headroom.")
+    return crop
+
+
 def _camera_rect(face: FaceObservation, width: int, height: int) -> Rect:
     """Include shoulders and a likely overlay border, not just facial landmarks."""
-    w = min(width, math.ceil(face.width * 2.4))
-    h = min(height, math.ceil(face.height * 2.3))
+    w = min(width, math.ceil(face.width * 2.8))
+    h = min(height, math.ceil(face.height * 3.0))
     return Rect(
         max(0, min(width - w, round(face.cx - w / 2))),
-        max(0, min(height - h, round(face.cy - h * 0.55))),
+        max(0, min(height - h, round(face.cy - h * 0.57))),
         w,
         h,
     )
@@ -99,7 +152,9 @@ def _median(values: list[float]) -> float:
     return ordered[len(ordered) // 2]
 
 
-def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int = 8) -> Rect | None:
+def detect_facecam_geometry(
+    source: Path, start_s: float, end_s: float, *, samples: int = 8
+) -> FacecamGeometry | None:
     """Find a webcam overlay tucked in a frame corner, or None (the caller then uses TRACK).
 
     Evidence required: a face that stays put (same spot and size) in more than half of the
@@ -131,14 +186,15 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
             slots = {round(face.t / step) for face in matches if 0 <= face.t < end_s - start_s}
             if len(slots) <= samples / 2:
                 continue
-            # Median position/size (robust to a leaning head), then expand to shoulders + border.
+            # Keep separate display and exclusion rectangles: the gameplay mask needs
+            # the whole overlay, while the camera panel trims only overlay edges.
             typical = FaceObservation(
                 0,
                 _median([f.cx for f in matches]),
                 _median([f.cy for f in matches]),
                 _median([f.width for f in matches]),
                 _median([f.height for f in matches]),
-                0,
+                _median([f.eye_y for f in matches]),
                 0,
             )
             if not (typical.cx < width * 0.45 or typical.cx > width * 0.55):
@@ -146,7 +202,14 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
             rect = _camera_rect(typical, width, height)
             if rect.w * rect.h >= width * height * 0.45:
                 continue
-            return _snap_to_edges(rect, width, height)
+            webcam = _snap_to_edges(rect, width, height)
+            face_box = Rect(
+                max(webcam.x, math.floor(typical.left)),
+                max(webcam.y, math.floor(typical.top)),
+                math.ceil(typical.right) - max(webcam.x, math.floor(typical.left)),
+                math.ceil(typical.bottom) - max(webcam.y, math.floor(typical.top)),
+            )
+            return FacecamGeometry(webcam, tight_face_crop(face_box, webcam, typical.eye_y))
     except (
         FaceDetectionUnavailable,
         ModelDownloadError,
@@ -158,6 +221,12 @@ def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int =
     ) as exc:
         log.warning("Facecam detection unavailable for %s: %s", source.name, exc)
     return None
+
+
+def detect_facecam(source: Path, start_s: float, end_s: float, *, samples: int = 8) -> Rect | None:
+    """Compatibility API returning the full webcam exclusion rectangle."""
+    geometry = detect_facecam_geometry(source, start_s, end_s, samples=samples)
+    return geometry.webcam if geometry is not None else None
 
 
 def _snap_to_edges(rect: Rect, width: int, height: int) -> Rect:

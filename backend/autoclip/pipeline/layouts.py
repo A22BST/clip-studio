@@ -40,6 +40,7 @@ class LayoutPlan:
     cam: Rect | None
     cam_fraction: float
     blur_windows: list[BlurWindow] = field(default_factory=list)
+    face_crop: Rect | None = None
 
     @property
     def seam_y_frac(self) -> float:
@@ -56,41 +57,46 @@ class LayoutPlan:
             cam=Rect(**data["cam"]) if data.get("cam") is not None else None,
             cam_fraction=float(data["cam_fraction"]),
             blur_windows=[BlurWindow(**window) for window in data.get("blur_windows", [])],
+            face_crop=Rect(**data["face_crop"]) if data.get("face_crop") is not None else None,
         )
 
 
 def default_plan(
-    layout: Layout, cam: Rect | None, blur_windows: list[BlurWindow] | None = None
+    layout: Layout,
+    cam: Rect | None,
+    blur_windows: list[BlurWindow] | None = None,
+    *,
+    face_crop: Rect | None = None,
+    cam_fraction: float | None = None,
 ) -> LayoutPlan:
     return LayoutPlan(
-        layout, cam, 0.65 if layout == Layout.REACTION else 0.38, list(blur_windows or [])
+        layout,
+        cam,
+        cam_fraction if cam_fraction is not None else 0.30,
+        list(blur_windows or []),
+        face_crop,
     )
 
 
 def camera_crop(rect: Rect, src_w: int, src_h: int, block_w: int, block_h: int) -> Rect:
-    """Expand rather than squeeze a camera box, retaining 10% face headroom.
+    """Expand to the exact panel aspect, retaining all of the clean webcam.
 
-    Round outward to source pixels; the render chain removes any subpixel
-    aspect discrepancy with a cover crop instead of stretching the image.
-    Exact integer aspect multiples can expand a tiny overlay to nearly the
-    whole source, so they would defeat the purpose of isolating the camera.
-    At source edges the margin is clipped, but the original box is never cut.
+    Source pixels on the gameplay side supply the extra width. Never pad or
+    shave the head to make a panel fit. Integer aspect multiples avoid a
+    second, implicit crop in ffmpeg.
     """
     if min(src_w, src_h, block_w, block_h, rect.w, rect.h) <= 0:
         raise ValueError("Frame, block and camera dimensions must be positive.")
     if rect.x < 0 or rect.y < 0 or rect.x + rect.w > src_w or rect.y + rect.h > src_h:
         raise ValueError("Camera rectangle must be inside the source frame.")
-    left = max(0, math.floor(rect.x - rect.w * 0.1))
-    top = max(0, math.floor(rect.y - rect.h * 0.1))
-    right = min(src_w, math.ceil(rect.x + rect.w * 1.1))
-    bottom = min(src_h, math.ceil(rect.y + rect.h * 1.1))
-    aspect = block_w / block_h
-    width = math.ceil(max(right - left, (bottom - top) * aspect))
-    height = math.ceil(max(bottom - top, (right - left) / aspect))
+    divisor = math.gcd(block_w, block_h)
+    unit_w, unit_h = block_w // divisor, block_h // divisor
+    multiple = math.ceil(max(rect.w / unit_w, rect.h / unit_h))
+    width, height = unit_w * multiple, unit_h * multiple
     if width > src_w or height > src_h:
-        raise ValueError("Camera plus margin cannot fit the block aspect inside the source.")
-    x = max(0, min(src_w - width, round((left + right - width) / 2)))
-    y = max(0, min(src_h - height, round((top + bottom - height) / 2)))
+        raise ValueError("Camera cannot fit the panel aspect inside the source.")
+    x = max(0, min(src_w - width, rect.x - (width - rect.w) // 2))
+    y = max(0, min(src_h - height, rect.y - (height - rect.h) // 2))
     return Rect(x, y, width, height)
 
 
@@ -113,13 +119,16 @@ def build_layout_filtergraph(
         raise ValueError("Layout output dimensions must be positive even dimensions.")
     cam_h = max(2, min(out_h - 2, round(out_h * plan.cam_fraction / 2) * 2))
     game_h = out_h - cam_h
-    cam = camera_crop(plan.cam, src_w, src_h, out_w, cam_h)
+    webcam = plan.cam
+    cam = camera_crop(plan.face_crop or webcam, src_w, src_h, out_w, cam_h)
     parts = [
         f"{input_label}setpts=PTS-STARTPTS,split=2[lcsrc][lgsrc]",
         f"[lcsrc]crop={cam.w}:{cam.h}:{cam.x}:{cam.y}:exact=1,"
         f"scale={out_w}:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop={out_w}:{cam_h},setsar=1[lc]",
-        f"[lgsrc]scale={out_w}:{game_h}:force_original_aspect_ratio=increase,"
+        # Mask before scaling/cropping so every gameplay aspect excludes the camera.
+        f"[lgsrc]drawbox=x={webcam.x}:y={webcam.y}:w={webcam.w}:h={webcam.h}:"
+        f"color=black:t=fill,scale={out_w}:{game_h}:force_original_aspect_ratio=increase,"
         f"crop={out_w}:{game_h},setsar=1[lg]",
     ]
     game = "[lg]"

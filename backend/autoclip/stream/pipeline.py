@@ -479,7 +479,7 @@ def render(
 ) -> list[ClipOutcome]:
     """Render every pick in highlights.json that passes the spoiler filter and the rules."""
     from ..pipeline import layouts, rules
-    from ..pipeline.facecam import detect_facecam
+    from ..pipeline.facecam import detect_facecam_geometry
     from ..pipeline.profanity import bleep_audio_filter, censor_words, profane_intervals
     from ..pipeline.transcript import Transcript
 
@@ -516,15 +516,15 @@ def render(
             layout = layouts.Layout.REACTION
         plan = None
         if layout in (layouts.Layout.FACECAM, layouts.Layout.REACTION):
-            cam = detect_facecam(source_path, clip.start_s, clip.end_s)
-            if cam is None:
+            camera = detect_facecam_geometry(source_path, clip.start_s, clip.end_s)
+            if camera is None:
                 notes.append(f"no facecam found: {layout.value} layout fell back to track")
                 layout = layouts.Layout.TRACK
             else:
                 blur = _blur_windows(meta.blur_word_ranges, transcript, clip, notes)
                 if meta.spoiler_level == "reaction-to-spoiler" and not blur:
                     notes.append("reaction-to-spoiler clip has no blur window (check the reveal)")
-                plan = layouts.default_plan(layout, cam, blur)
+                plan = layouts.default_plan(layout, camera.webcam, blur, face_crop=camera.face_crop)
 
         # -- rules -----------------------------------------------------------
         result = rules.check_clip(
