@@ -18,6 +18,24 @@ hot moments from chat; your job is to turn them into good, safe, on-brief clips.
   hashtags/mentions, spoiler policy) and ~15 `candidates`, each with `window_start_s/end_s`, `hype_reasons`,
   `chat_sample` (real chat lines at the peak) and `transcript` rendered as `[wordIndex]word`.
 - Also read `campaigns/<campaign>.yaml` if you need the full rules (banned words, notes).
+- candidates may carry viewer_clips (real Twitch clips of that moment, with view counts): a candidate with high-view viewer clips is strong proof of a real moment; read its title.
+
+## 0b. HARD RULES: what counts as a clip (Ahmad's bar, 21 Nov 2026)
+Ahmad's verdict on the first clips: the jet-ski dog clip was good "because it's unique"; a "free PS5" chat-bait
+and a "chat spam stops" joke were "boring, no real value". So:
+1. **A clip needs a moment type.** Put it in `reason` as `type: <one of>`:
+   - `weird` (strange, unexpected or absurd thing in the game: a dog on a jet ski, a bed in a pool),
+   - `unique-situation` (something that rarely/never happens, a glitch, a chase that goes wrong in a new way),
+   - `rage-or-shock` (the streamer gets angry, crashes out, screams, laughs uncontrollably, is truly shocked).
+   No type = no clip.
+2. **NOT clips** (never pick these): talking to chat, giveaways/bait ("type 1 and I give away..."), reading
+   comments or donations, jokes about chat spam, mission walkthroughs/explanations, loading or menu time,
+   generic gameplay with nothing unusual.
+3. **3-second stranger test:** would someone who has never seen the stream understand what is weird or funny
+   within 3 s of the clip starting, without knowing KreekCraft or the mission? If not, skip it.
+4. **Zero clips is a valid answer** for a slice of the VOD. Never pad to reach 5-10; fewer, better clips.
+5. Candidates with `viewer_clips` (real Twitch clips with high view counts) are strong evidence of a real
+   moment: read their titles, but still apply rules 1-3.
 
 ## 1. Decide per candidate (work through ALL of them)
 1. Read the transcript and chat sample. Chat reacts 5-20 s AFTER the event, so the clip must START before the event
@@ -35,7 +53,7 @@ hot moments from chat; your job is to turn them into good, safe, on-brief clips.
    - Prefer clips where the hook text matches what is spoken/seen in the first 2 s; the title promise must
      be paid off inside the clip, ideally by second 15.
 3. Skip a candidate when: nothing actually happens, it is only chat spam, it needs context nobody has, or it is
-   boring dead air. Quality over count: 5-10 clips total, best first. Never invent moments the transcript does not support.
+   boring dead air. Quality over count: at most 10 clips, best first; zero is fine. Never invent moments the transcript does not support.
 4. Overlapping candidates: keep the better one.
 
 ## 2. Spoiler level (keep it LIGHT: three levels only)

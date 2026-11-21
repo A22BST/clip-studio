@@ -45,6 +45,30 @@ Owners: Codex = `codex:codex-rescue`, model + effort as stated. "Sonnet" = Sonne
 
 Order of work: 1, 2 (done) -> 3 and 4 as soon as `codex/hook-size` merges -> 5, 6, 7 in the Day 4 batch -> 8-10 with the automation owner.
 
+## 2b. Added 21 Nov (Ahmad's bar, sound, tools)
+
+**Ahmad's bar for a clip** (now hard rules in `.claude/skills/clip/SKILL.md`, section 0b): a clip needs something weird or unexpected, a unique situation, or the streamer raging/shocked. Chat bait, giveaways, reading comments, mission walkthroughs are not clips. Moment type is required, 3-second stranger test, zero clips per slice is fine.
+**Twitch viewer clips as candidates (C2): done here.** `prepare()` fetches the VOD's viewer clips (best effort), feeds them to hype scoring and writes `viewer_clips` (views, title, offset) into each candidate.
+
+| # | Item | Verdict | Effort | Owner | Done when |
+|---|---|---|---|---|---|
+| 11 | **Story/payoff check before render** (setup, change, payoff; re-check after boundary refinement) | Best of the gta6clipper ideas; extends rules 1-3 | M | Codex gpt-6.1-sol medium | Report lists setup/payoff per clip; rejects clips with no payoff |
+| 12 | **Frame sheet review** (open/payoff frames, flag menus, wrong footage, hook that misdescribes) | Cheap, partly done (`dark_opening`) | M | Codex gpt-6.1-sol medium | Contact sheet in the export folder per job |
+| 13 | **Rage/voice-jump candidates** from audio (sudden loudness rise, scream, laugh) as an independent signal | Matches "crashes out" bar; `audio_hype.py` already has the base | M | Codex gpt-6.1-sol medium | Candidates tagged `voice_jump`; check on Day 3 VOD |
+| 14 | **Finished-media QC** (frozen/black, silence, loudness), hold failures | Medium | M | Codex gpt-6.1-sol medium | Failing clip held, not posted |
+| 15 | **Learn from our posts at 24/48 h** (view stats per post ID, per hook/length/layout tag) | Same as #9, uses real numbers | M | Sonnet (auto/ owner) | Weekly `what_works.md` |
+| 16 | **Optional SFX layer** at the payoff (OFF by default, one restrained accent) | Unproven (no causal evidence found); small test only | M | Codex gpt-6-luna low after the license list is chosen | A/B of 10 clips with/without |
+
+Details and sources: `docs/virality-gta6clipper-ideas.md` (reimplement ideas only; project has no license, copy no code, run nothing from it; live mode, game-banner OCR and music bed ranked low) and `docs/virality-sound-and-tools.md`.
+
+**Sound verdict.**
+- No direct evidence that SFX or meme stingers raise views on streamer clips. Treat as a test, not a fix.
+- **Background music: keep OFF.** TikTok promotional content needs Commercial Music Library tracks, Instagram's music library is for non-commercial use, YouTube Content ID can claim or block, and TikTok can mute a clip whose sound is removed. The campaign pays per verified view, so any mute or block costs money. Stream audio itself may already contain third-party music; prefer clips where it does not.
+- **License-safe SFX if we ever add them:** Pixabay (commercial use, no credit), Mixkit SFX Free License (no credit), Freesound CC0 assets only (check each one), YouTube Audio Library (no Content ID claims). Keep a local allowlist with source, license and checksum; do not bulk-scrape. Discord/Google Drive packs: a shared folder is not a license (meme music, movie samples and repacked stock are the usual traps). Ahmad decides; nothing downloaded.
+- ffmpeg design for the SFX layer (delay at payoff, duck the effect under speech, loudnorm -14 LUFS) is in the sound doc.
+
+**quso.ai and repurpose.io: keep our pipeline + Upload-Post.** quso: $39/mo (300 processing minutes), $49/mo (600), transcript-based clipping that is weak for silent gameplay, no public API. repurpose.io: $35/mo Starter (3 accounts per network, 5,000 posts/mo), cross-posting only, no chat-aware highlight finding. Neither beats our chat-hype + Claude selection + facecam layout + rules check. Possible later use of repurpose.io: only for source watching/backup.
+
 ## 3. A/B test design (cheap)
 
 - Never post near-duplicates of one moment (repost penalty + campaign rules); test across different moments instead.
