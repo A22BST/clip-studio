@@ -9,14 +9,14 @@ platforms: [tiktok, instagram, youtube]
 rate_per_1k_usd: 1.0
 min_duration_s: 20
 max_duration_s: 60
-required_hashtags: [GTA6, KreekCraft, GrandTheftAutoVI]
+required_hashtags: [ad, GTA6, KreekCraft, GrandTheftAutoVI]  # #ad in the caption is the paid disclosure (Ahmad, 21 Nov)
 required_caption_phrases: ["Watch KreekCraft on YouTube and Twitch"]
 # Logo must be visible for the ENTIRE clip (start to finish). Official asset: the "KreekCraft
 # Overlay" file in the campaign's Drive folder (a 636 kB file; Ahmad downloads or approves it).
 # Put it at campaigns/assets/kreekcraft-logo.png. Until it exists every
 # clip is BLOCKED by the rules check - that is intentional.
 required_overlay: kreekcraft-logo.png
-disclosure_required: true
+disclosure_required: false  # Ahmad 21 Nov: no burned-in "#ad Paid partnership"; #ad goes in the caption instead
 disclosure_text: "#ad  Paid partnership"
 disclosure_duration_s: 3
 no_ai_visuals: false
