@@ -208,3 +208,44 @@ Handover from the planning chat: `docs/setup/handover-master.md`; its setup file
   Twitch Client Secret reset; archive the old automation session (`local_f0829020`) from the sidebar.
 - Sessions: build session 1 and fused-hype told to stop (done). Setup helper `local_71215f0d` walks Ahmad through Upload-Post/Telegram.
   New sessions are started by the master so they report to it.
+
+## Free-model plan (2026-11-21, decided in the CoWorkOS chat, Opus): not started
+Ahmad's decision: the clip farm runs on free LLMs by default so Claude and Codex stay free for real work. Pay for premium models
+only once clips earn money. The goal is volume: as many clips as possible.
+- Current state: auto selection (`auto/select.py`) and the weekly report (`auto/learn.py`) call `claude -p --model sonnet` through
+  `auto/claude_cli.py` (Ahmad's Claude plan). The provider layer (`providers/`, `build_provider`) already has an OpenAI-compatible
+  adapter (any base URL) with JSON validation and one retry, but only ONE `active_provider` (default `anthropic`) and only the manual
+  pipeline uses it.
+- To build:
+  1. Fallback chain read from settings: an ordered list of {name, base_url, model, key name}. On a rate limit, quota, connection or
+     malformed JSON error, move to the next entry. Adding a provider is config plus a key, not code.
+     Start order: Z.ai GLM Flash (free), NVIDIA API catalog free endpoints (DeepSeek, Kimi, MiniMax), Groq, OpenRouter `:free` models,
+     AIHubMix free models. Free tiers change often: verify each one's current model IDs and limits at build time.
+     Skip Qwen Code (free tier shut down 2026-04-15).
+  2. Claude is OFF by default: an opt-in last entry, never a silent fallback.
+  3. `learn.py` weekly report moves to the chain first (low stakes).
+  4. `select.py` moves to the chain without tools: the code puts `candidates.json`, `what_works.md` and the campaign rules in the
+     prompt, writes `highlights.json` itself, and keeps `validate_highlights` and the retry with the error. No file or shell
+     access for the model (the transcript and chat are untrusted).
+  5. Record which provider and model picked each clip in the tracker, next to its views and earnings, so the "pay for premium?"
+     decision can be made on data.
+  6. Measure the free models against the current Claude `/clip` selection on the `stream/hype_eval.py` ground truth before making
+     the free chain the default for selection; put the best-scoring free model first. (The 45% figure above is the fused-hype ranking
+     test, not the selection step, so it is not the baseline here.)
+- Keys: Ahmad creates each account and API key himself; they go in the keyring like the existing secrets.
+- Volume limits that will bite before model limits: render speed on the GTX 1060, platform spam detection on near-identical posts,
+  Upload-Post caps, and campaigns paying per approved clip.
+
+### Master update (21 Nov, end of first master chat)
+- Posted: TikTok crazy_heist, jet-ski clip (21 Nov), logged in `D:\autoclip\auto\manual_posts.csv`. Submission to Content Rewards: by Ahmad (no bot).
+- Ahmad's rules added: no burned-in "#ad Paid partnership" (#ad in caption; `disclosure_required: false`, `ad` in required hashtags);
+  5 hashtags per post (Instagram cap); clips must be unique/weird moments or crashouts (Day 3 chat-talk picks rejected as boring).
+- Data moved to USB: `AUTOCLIP_HOME=D:\autoclip` (User env var, NTFS stick "CLIPDATA"); DB paths rewritten. Two duplicate files remain in
+  `C:\Users\ahmad\.autoclip\exports\05a6dc5ea9164c73\` (locked by a Codex process; copies are on D:): delete that folder when unlocked.
+- `to-post/` (git-ignored) + `to-post/CAPTIONS.txt`: jet-ski clip for Instagram + YouTube on 22 Nov (account warmup day 3).
+- Campaign scout merged (`docs/campaign-scout.md`): KreekCraft now $0.50/1k; join AsianJeff (Twitch, $1) and Dylan Page (YouTube, $1) next (Ahmad joins).
+- Running: session "Clip quality & virality" (`local_b022b69f`, branch `claude/virality-plan-a38caa`): virality plan, /clip unique-moment rules,
+  viewer clips as candidates, SFX plan, gta6-clipper review (NO license -> ideas only), quso/repurpose verdict. Review + merge when it reports.
+- Waiting on Ahmad: Upload-Post Basic + key, Telegram bot, `claude` login, Twitch secret reset, Whop payout check, join AsianJeff/Dylan Page,
+  yes/no on downloading the Discord SFX/music packs, archive old session `local_f0829020` and (after the setup helper) the planning chat.
+- Token rule: Claude weekly budget tight; Codex does coding/research, Sonnet sessions coordinate, Opus master chats stay short.
