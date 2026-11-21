@@ -221,6 +221,12 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         "a stamped line's last word. Keep every beat inside those selected words' "
         "timestamps (not merely inside the candidate window), in setup/change/payoff order. "
         "Leave at least 1 second after payoff.end_s inside the selected word range. "
+        "Length rule: the selected word range (start_word_index..end_word_index) must be ONE "
+        "tight, continuous sequence of 25-60 seconds (within limits.min_duration_s and "
+        "limits.max_duration_s), starting 2-5 seconds before the setup and ending 1-3 seconds "
+        "after the payoff. Setup, change and payoff must all sit inside that short span, close "
+        "together (payoff no later than about 40 seconds after the setup starts). Never pick a "
+        "range that spans minutes of stream; if the moment cannot be told in that span, skip it. "
         "Skip uncertain timing or insufficient usable footage; zero picks is valid.\n"
     )
     if len(system) > 50000:
