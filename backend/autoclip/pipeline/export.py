@@ -206,15 +206,17 @@ def _zoom_filter(zoom: float, out_w: int, out_h: int) -> str:
 def _add_overlay(filtergraph: str, out_w: int, out_h: int) -> str:
     """Composite the campaign logo (input 1) over the finished video for the whole clip.
 
-    Placed top-left inside the platform safe area, ~20% of the output width. ``shortest``
-    ends the looped still image with the clip so the render terminates.
+    Placed left, ~26% of the output width, just below the hook and #ad zone (top ~24%,
+    see captions.build_hook_event / build_disclosure_event) so the big hook never covers it
+    and it stays clear of the platform UI at the very top. ``shortest`` ends the looped
+    still image with the clip so the render terminates.
     """
     if not filtergraph.endswith("[vout]"):
         raise ExportError("Cannot add an overlay: unexpected filtergraph shape.")
     base = filtergraph[: -len("[vout]")] + "[vbase]"
-    logo_w = (out_w // 5) // 2 * 2
+    logo_w = (out_w * 26 // 100) // 2 * 2
     margin_x = out_w // 25
-    margin_y = out_h // 14
+    margin_y = out_h * 25 // 100
     return (
         f"{base};[1:v]scale={logo_w}:-1,format=rgba[ovl];"
         f"[vbase][ovl]overlay=x={margin_x}:y={margin_y}:shortest=1,format=yuv420p[vout]"
