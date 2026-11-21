@@ -204,8 +204,8 @@ Handover from the planning chat: `docs/setup/handover-master.md`; its setup file
 - Running / next: Day 2 re-render with the real overlay (job `05a6dc5ea9164c73`) -> frame check -> send Ahmad "a dog on a jet ski" for a hand post;
   Day 3 (VOD 2934981732, 1:40-4:00) downloaded, transcription hit MemoryError while the render ran: re-run `clip stream ... --prepare-only` alone;
   then move `~/.autoclip` to `D:\autoclip` and set User env `AUTOCLIP_HOME`.
-- Waiting on Ahmad: Upload-Post Basic + `UPLOAD_POST_API_KEY`; Telegram bot + `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`; `claude` CLI login;
-  Twitch Client Secret reset; archive the old automation session (`local_f0829020`) from the sidebar.
+- Waiting on Ahmad: Upload-Post Basic + `UPLOAD_POST_API_KEY`; Telegram bot + `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`;
+  archive the old automation session (`local_f0829020`) from the sidebar.
 - Sessions: build session 1 and fused-hype told to stop (done). Setup helper `local_71215f0d` walks Ahmad through Upload-Post/Telegram.
   New sessions are started by the master so they report to it.
 
@@ -246,7 +246,7 @@ only once clips earn money. The goal is volume: as many clips as possible.
 - Campaign scout merged (`docs/campaign-scout.md`): KreekCraft now $0.50/1k; join AsianJeff (Twitch, $1) and Dylan Page (YouTube, $1) next (Ahmad joins).
 - Running: session "Clip quality & virality" (`local_b022b69f`, branch `claude/virality-plan-a38caa`): virality plan, /clip unique-moment rules,
   viewer clips as candidates, SFX plan, gta6-clipper review (NO license -> ideas only), quso/repurpose verdict. Review + merge when it reports.
-- Waiting on Ahmad: Upload-Post Basic + key, Telegram bot, `claude` login, Twitch secret reset, Whop payout check, join AsianJeff/Dylan Page,
+- Waiting on Ahmad: Upload-Post Basic + key, Telegram bot, Whop payout check, join AsianJeff/Dylan Page,
   yes/no on downloading the Discord SFX/music packs, archive old session `local_f0829020` and (after the setup helper) the planning chat.
 - Token rule: Claude weekly budget tight; Codex does coding/research, Sonnet sessions coordinate, Opus master chats stay short.
 - 21 Nov late: virality branch merged (`61f3b31`): /clip hard rules (moment type weird / unique-situation / rage-or-shock, 3-second
@@ -254,3 +254,4 @@ only once clips earn money. The goal is volume: as many clips as possible.
   `docs/virality-*.md`. Full suite: 807 passed, 1 failed. The failure `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire`
   also fails on the commit before the merge (it passed earlier the same day), so it looks date/clock-dependent: give it to Codex (gpt-6.1-sol medium).
   Open from the virality plan: hook safe zone/visible at t=0 (#3), facecam crop without sub counter (#4), cold open (#5), opening-frame picker (#6).
+- 21 Nov (key-setup session): `claude` CLI login DONE and verified (`find_claude()` -> `claude -p` returned ok); Twitch Client Secret RESET DONE (new secret in User env `TWITCH_CLIENT_SECRET`, 30 chars, app-token request OK). Free-model keys set on branch `claude/key-setup-751319` (see "Free-model chain").

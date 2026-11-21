@@ -34,7 +34,7 @@ Owners: **Ahmad**, **Master** (this Opus session: planning, review, merges), **S
 | C4 | Open minor safety items (immutable approved copy, token URL in logs) | Codex gpt-6.1-sol medium | Tests + Master review |
 | C5 | Daily views, weekly `what_works.md`, throttle check against real numbers | Automation; Master reviews week 1 | First weekly report arrives in Telegram |
 | C6 | DONE 20 Nov. Push `main` to GitHub (backup) | Master | `origin/main` = `main` | Says **OK to push** |
-| C7 | Reset the Twitch Client Secret (it was pasted in a chat) and save the new one (clipboard method) | Ahmad | New secret set | Does it |
+| C7 | Reset the Twitch Client Secret (it was pasted in a chat) and save the new one (clipboard method) | Ahmad | New secret set | DONE 21 Nov (verified: app-token request OK) |
 
 ## Decision points
 - **Week 6** (about 1 Jan 2027): 100k+ total views or one clip at 50k+ -> scale up (more streamers and campaigns).
