@@ -87,6 +87,29 @@ engine blocks it under `strict`).
 - `reaction`: reaction clips (camera large, gameplay small); forced automatically for `reaction-to-spoiler`.
 - `track`: no camera / IRL / just talking. The pipeline falls back to `track` itself if no camera is detected.
 
+## 4b. Story evidence (required for every pick)
+Every pick in highlights.json MUST include `story.setup`, `story.change` and `story.payoff`, each with
+`start_s`, `end_s` (seconds in the ORIGINAL source video, read from `transcript.json` word timestamps,
+never estimated from word indexes) and non-empty `text`:
+- setup: the context a stranger needs. change: the action, surprise or reversal. payoff: the visible
+  consequence, punchline or real reaction that delivers the hook's promise.
+```json
+"story": {
+  "setup":  {"start_s": 120.0, "end_s": 123.0, "text": "He drives onto the pier"},
+  "change": {"start_s": 128.0, "end_s": 130.0, "text": "A dog jumps on the jet ski"},
+  "payoff": {"start_s": 132.0, "end_s": 134.0, "text": "He screams 'a DOG?!'", "speech_based": true}
+}
+```
+Set `payoff.speech_based: true` when the payoff is spoken or vocal; its text must quote or describe it.
+For a visual payoff, describe what the viewer sees. All three beats sit inside the word range, in order,
+with at least 1 s (better 1-3 s of reaction) after the payoff. Boundary refinement re-checks the story
+and may widen within campaign limits or reject.
+Drop a pick whose payoff you can't explain plainly to someone who never watched the streamer, or
+whose payoff evidence or timing is uncertain. Never pad to the campaign minimum with black screens,
+loading, "Wasted" screens or unrelated footage. Usable duration = window minus black/dead spans and
+transcript gaps longer than 6 s (Whisper dropouts, cutscenes); short pauses in gameplay are fine.
+Zero picks is valid.
+
 ## 5. Write highlights.json
 Write `%USERPROFILE%\.autoclip\work\<job>\highlights.json`:
 ```json
