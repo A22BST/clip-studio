@@ -19,6 +19,9 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+# Keep titles and hooks printable on legacy Windows output streams.
+if hasattr(console.file, "reconfigure"):
+    console.file.reconfigure(errors="replace")
 
 
 @app.callback()

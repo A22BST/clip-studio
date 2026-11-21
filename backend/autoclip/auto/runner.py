@@ -12,6 +12,7 @@ Session 1's code is used only through its CLI and its report/highlights files.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -52,7 +53,8 @@ def stream_command(job: dict[str, Any], extra: list[str]) -> list[str]:
 def _run(cmd: list[str], runner: Callable[..., Any], timeout_s: int) -> subprocess.CompletedProcess:
     done = runner(
         cmd, capture_output=True, text=True, timeout=timeout_s, stdin=subprocess.DEVNULL,
-        check=False, env=None,
+        check=False, env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8", errors="replace",
     )  # fmt: skip
     return done
 
