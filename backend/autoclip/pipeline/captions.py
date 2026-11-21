@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import math
-import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -245,6 +244,61 @@ HOOK_STYLE_NAME = "Hook"
 DISCLOSURE_STYLE_NAME = "Disclosure"
 
 
+# Metrics of the bundled Anton-Regular.ttf. libass normalises ASS font sizes to
+# the Windows ascender + descender (2876 + 674), not to visible capital height
+# (1760 units). Thus a fontsize of 86 produces capitals only about 43px high.
+_ANTON_LINE_UNITS = 3550
+_ANTON_CAP_RATIO = 1760 / _ANTON_LINE_UNITS
+# fmt: off
+_ANTON_ADVANCES = dict(zip(
+    " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789#.,!?-",
+    (
+        480, 994, 980, 971, 1010, 843, 817, 993, 1022, 464, 955, 967,
+        814, 1528, 1020, 996, 967, 1011, 976, 945, 810, 970, 961, 1458,
+        991, 914, 840, 990, 1027, 1006, 1020, 1000, 574, 1032, 1035, 498,
+        538, 1005, 508, 1553, 1021, 1017, 1027, 1020, 710, 972, 625, 1022,
+        944, 1426, 940, 944, 790, 1012, 677, 1012, 1012, 1012, 1012, 1012,
+        1012, 1012, 1012, 1119, 468, 484, 469, 1008, 637,
+    ),
+    strict=True,
+))
+# fmt: on
+
+
+def _overlay_text_width(text: str, fontsize: float) -> float:
+    # Reserve extra advance for libass synthetic bold and rounding. Unknown
+    # glyphs get a full em so fallback characters are handled conservatively.
+    return sum(_ANTON_ADVANCES.get(c, 2048) + 70 for c in text) / _ANTON_LINE_UNITS * fontsize
+
+
+def _overlay_lines(text: str, fontsize: float, max_width: float, max_lines: int) -> list[str]:
+    """Wrap at a fixed readable size, ellipsising excess copy."""
+    lines: list[str] = []
+    remaining = text
+    while remaining and len(lines) < max_lines:
+        end = 0
+        while (
+            end < len(remaining)
+            and _overlay_text_width(remaining[: end + 1], fontsize) <= max_width
+        ):
+            end += 1
+        if end == len(remaining):
+            lines.append(remaining)
+            break
+        if len(lines) == max_lines - 1:
+            while (
+                end and _overlay_text_width(remaining[:end].rstrip() + "...", fontsize) > max_width
+            ):
+                end -= 1
+            lines.append(remaining[:end].rstrip() + "...")
+            break
+        split = remaining.rfind(" ", 0, end + 1)
+        end = split if split > 0 else max(1, end)
+        lines.append(remaining[:end].rstrip())
+        remaining = remaining[end:].lstrip()
+    return lines or [""]
+
+
 def build_hook_event(
     text: str, width: int, height: int, duration_s: float = 2.0
 ) -> tuple[pysubs2.SSAEvent, pysubs2.SSAStyle]:
@@ -252,16 +306,17 @@ def build_hook_event(
     if width <= 0 or height <= 0 or not math.isfinite(duration_s) or duration_s <= 0:
         raise ValueError("Hook dimensions and duration must be positive and finite")
     clean = " ".join(text.replace("\\", " ").replace("{", "").replace("}", "").split())
-    lines = textwrap.wrap(clean, width=28, max_lines=2, placeholder="...") or [""]
     style = pysubs2.SSAStyle()
     style.fontname = "Anton"
-    # A conservative glyph-width bound also accommodates wide uppercase letters.
-    style.fontsize = min(height * 0.045, width * 0.8 / (max(map(len, lines)) * 0.55 or 1))
+    # Target visible capitals at 4.5% of the frame, rather than ASS line height.
+    style.fontsize = height * 0.045 / _ANTON_CAP_RATIO
+    lines = _overlay_lines(clean, style.fontsize, width * 0.9, 2)
     style.bold = True
     style.alignment = pysubs2.Alignment.TOP_CENTER
-    style.marginl = style.marginr = round(width * 0.1)
-    style.marginv = round(height * 0.08)
-    style.outline = max(1, height / REFERENCE_HEIGHT * 4)
+    style.marginl = style.marginr = round(width * 0.05)
+    style.marginv = round(height * 0.02)
+    style.outline = max(1, height / REFERENCE_HEIGHT * 6)
+    style.shadow = 0
     fade_ms = min(150, round(duration_s * 1000 / 3))
     event = pysubs2.SSAEvent(
         start=0,
@@ -287,18 +342,20 @@ def build_disclosure_event(
     clean = " ".join(text.replace("\\", " ").replace("{", "").replace("}", "").split())
     style = pysubs2.SSAStyle()
     style.fontname = "Anton"
-    style.fontsize = min(height * 0.034, width * 0.9 / (max(len(clean), 1) * 1.1))
+    style.fontsize = height * 0.027 / _ANTON_CAP_RATIO
+    label = _overlay_lines(clean, style.fontsize, width * 0.9, 1)[0]
     style.bold = True
     style.alignment = pysubs2.Alignment.TOP_CENTER
     style.marginl = style.marginr = round(width * 0.05)
-    style.marginv = round(height * 0.17)
+    style.marginv = round(height * 0.19)
     style.outline = max(1, height / REFERENCE_HEIGHT * 3)
+    style.shadow = 0
     event = pysubs2.SSAEvent(
         start=0,
         end=pysubs2.make_time(s=duration_s),
         style=DISCLOSURE_STYLE_NAME,
-        layer=1,
-        text=r"{\fad(120,120)}" + clean,
+        layer=2,  # Separate collision groups keep the label inside the top quarter.
+        text=r"{\fad(120,120)}" + label,
     )
     return event, style
 
