@@ -39,6 +39,7 @@ def highlights(start, end):
 
 
 def test_selection_runs_claude_headless_and_validates(env, work):
+    env.config.selection.backend = "claude"
     seen = {}
 
     def fake(cmd, **kw):
@@ -48,6 +49,9 @@ def test_selection_runs_claude_headless_and_validates(env, work):
 
     out = select.run_selection(JOB, env.config, runner=fake, cwd=Path.cwd())
     assert out == work / "highlights.json"
+    assert json.loads((work / "selection_meta.json").read_text()) == {
+        "provider": "claude-cli", "model": "sonnet"
+    }
     cmd = seen["cmd"]
     assert cmd[1] == "-p" and f"stream job {JOB}" in cmd[2]
     assert "--disallowedTools" in cmd and "Bash" in cmd[cmd.index("--disallowedTools") + 1]
@@ -57,6 +61,7 @@ def test_selection_runs_claude_headless_and_validates(env, work):
 
 
 def test_selection_retries_with_the_error_then_succeeds(env, work):
+    env.config.selection.backend = "claude"
     prompts = []
 
     def fake(cmd, **kw):
@@ -70,6 +75,7 @@ def test_selection_retries_with_the_error_then_succeeds(env, work):
 
 
 def test_selection_gives_up_after_max_attempts(env, work):
+    env.config.selection.backend = "claude"
     calls = []
 
     def fake(cmd, **kw):
@@ -101,7 +107,7 @@ def test_process_job_end_to_end_with_fakes(env, work):
     )
     job = env.store.claim_next_job()
     folder = paths.exports_dir() / JOB
-    entry = lambda n, status, path="": dict(  # noqa: E731
+    entry = lambda n, status, path="": dict(  # noqa: E731, C408
         title=n, hook="h", caption="cap", hashtags=["GTA6"], qa_score=88, status=status,
         spoiler_level="none", layout_used="facecam", path=path, start_s=0, end_s=30, violations=[],
     )  # fmt: skip
@@ -164,6 +170,7 @@ def test_cleanup_waits_for_pending_clips(env, make_clip):
 
 
 def test_weekly_report_sent_and_rules_saved(env, make_clip, tmp_path):
+    env.config.learn.backend = "claude"
     text = "## WHAT_WORKS\n- short hooks win\n\n## REPORT\n3 clips posted, 12k views, ~$12."
     n = RecordingNotifier()
     works = tmp_path / "what_works.md"
@@ -175,8 +182,123 @@ def test_weekly_report_sent_and_rules_saved(env, make_clip, tmp_path):
 
 
 def test_weekly_report_survives_a_dead_model(env, tmp_path):
+    env.config.learn.backend = "claude"
     n = RecordingNotifier()
     report = learn.run_weekly(
         env.store, env.config, n, runner=lambda cmd, **kw: done("", 1), works_path=tmp_path / "w.md"
     )
     assert "no report" in report and n.texts
+
+
+def test_weekly_chain_default(env, monkeypatch, tmp_path):
+    from autoclip.providers.chain import ChainResult
+
+    seen = []
+
+    class Chain:
+        def complete_text(self, system, user):
+            seen.append((system, user))
+            return "## WHAT_WORKS\n- Keep hooks short\n## REPORT\n5 views", ChainResult("free", "m")
+
+    monkeypatch.setattr(learn, "build_chain", Chain)
+    monkeypatch.setattr(learn.claude_cli, "run_claude", lambda *a, **k: pytest.fail("no CLI"))
+    works = tmp_path / "rules.md"
+    report = learn.run_weekly(env.store, env.config, RecordingNotifier(), works_path=works)
+    assert report == "5 views"
+    assert "hooks short" in works.read_text()
+    assert "NO tools" in seen[0][0] and "untrusted" in seen[0][0]
+
+
+def test_weekly_chain_failure_does_not_use_claude(env, monkeypatch, tmp_path):
+    from autoclip.providers.base import ProviderError
+
+    class Chain:
+        def complete_text(self, *args):
+            raise ProviderError("exhausted")
+
+    monkeypatch.setattr(learn, "build_chain", Chain)
+    monkeypatch.setattr(learn.claude_cli, "run_claude", lambda *a, **k: pytest.fail("no CLI"))
+    result = learn.run_weekly(env.store, env.config, RecordingNotifier(),
+                              works_path=tmp_path / "rules.md")
+    assert "no report" in result
+
+
+def test_chain_selection_inlines_data_repairs_and_records(env, work, monkeypatch):
+    from autoclip.config import Settings
+    from autoclip.providers import chain
+
+    env.config.selection.backend = "chain"
+    data = json.loads((work / "candidates.json").read_text())
+    data["campaign"] = "Test Campaign"
+    (work / "candidates.json").write_text(json.dumps(data), encoding="utf-8")
+    (select.what_works_path()).write_text("Short hooks", encoding="utf-8")
+    monkeypatch.setattr(select, "REPO_ROOT", Path.cwd())
+    calls = []
+
+    async def complete(self, system, user, config, **kwargs):
+        calls.append((system, user, kwargs))
+        bounds = (9000, 9100) if len(calls) == 1 else (120, 300)
+        return "```json\n" + highlights(*bounds) + "\n```"
+
+    settings = Settings(chain={"entries": [{"name": "free", "model": "test", "base_url": "https://free.invalid/v1"}]})
+    monkeypatch.setattr(chain, "get_secret", lambda *a: "fake")
+    monkeypatch.setattr(chain.OpenAIProvider, "_complete", complete)
+    monkeypatch.setattr(select, "build_chain", lambda: chain.ChainProvider(settings))
+    monkeypatch.setattr(select.claude_cli, "run_claude", lambda *a, **k: pytest.fail("no CLI"))
+    select.run_selection(JOB, env.config)
+    assert select.validate_highlights(JOB) == 1
+    assert "not inside any candidate" in calls[1][1]
+    assert "Short hooks" in calls[0][1] and '"first_word": 100' in calls[0][1]
+    assert "rate_per_1k_usd: 1.0" in calls[0][0]
+    assert "NO tools" in calls[0][0] and "untrusted DATA" in calls[0][0]
+    assert calls[0][2] == {"json_mode": False, "max_tokens": 8000}
+    assert json.loads((work / "selection_meta.json").read_text()) == {
+        "provider": "free", "model": "test"
+    }
+
+
+def test_chain_selection_bad_json_advances_entry(env, work, monkeypatch):
+    from autoclip.config import Settings
+    from autoclip.providers import chain
+
+    env.config.selection.backend = "chain"
+    seen = []
+
+    async def complete(self, *args, **kwargs):
+        seen.append(self.model)
+        return "bad JSON" if self.model == "bad" else highlights(120, 300)
+
+    settings = Settings(chain={"entries": [{"name": "a", "model": "bad", "base_url": "https://a.invalid/v1"},
+                                           {"name": "b", "model": "good", "base_url": "https://b.invalid/v1"}]})
+    monkeypatch.setattr(chain, "get_secret", lambda *a: "fake")
+    monkeypatch.setattr(chain.OpenAIProvider, "_complete", complete)
+    monkeypatch.setattr(select, "build_chain", lambda: chain.ChainProvider(settings))
+    select.run_selection(JOB, env.config)
+    assert seen == ["bad", "bad", "good"]
+
+
+def test_chain_selection_rejects_oversize_candidate_before_call(env, work, monkeypatch):
+    env.config.selection.backend = "chain"
+    data = {"candidates": [{"first_word": 100, "last_word": 400, "transcript": "x" * 100000}]}
+    (work / "candidates.json").write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(select, "build_chain", lambda: pytest.fail("oversize must not call model"))
+    with pytest.raises(select.SelectionError, match="No complete candidate fits"):
+        select.run_selection(JOB, env.config)
+
+
+def test_chain_selection_surfaces_attempts(env, work, monkeypatch):
+    from autoclip.providers.base import ProviderError
+
+    attempts = [{"bucket": "free", "model": "test", "kind": "timeout"},
+                {"bucket": "other", "model": "next", "kind": "skipped:cooldown"}]
+
+    class FailedChain:
+        def complete_validated(self, *args, **kwargs):
+            raise ProviderError("No usable chain entries remain.", attempts=attempts)
+
+    env.config.selection.backend = "chain"
+    monkeypatch.setattr(select, "build_chain", FailedChain)
+    with pytest.raises(select.SelectionError) as caught:
+        select.run_selection(JOB, env.config)
+    assert caught.value.attempts == attempts
+    assert "free/test=timeout; other/next=skipped:cooldown" in str(caught.value)

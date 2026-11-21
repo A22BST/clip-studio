@@ -209,7 +209,7 @@ Handover from the planning chat: `docs/setup/handover-master.md`; its setup file
 - Sessions: build session 1 and fused-hype told to stop (done). Setup helper `local_71215f0d` walks Ahmad through Upload-Post/Telegram.
   New sessions are started by the master so they report to it.
 
-## Free-model plan (2026-11-21, decided in the CoWorkOS chat, Opus): not started
+## Free-model plan (2026-11-21, decided in the CoWorkOS chat, Opus): BUILT and merged, see "Free-model chain" below
 Ahmad's decision: the clip farm runs on free LLMs by default so Claude and Codex stay free for real work. Pay for premium models
 only once clips earn money. The goal is volume: as many clips as possible.
 - Current state: auto selection (`auto/select.py`) and the weekly report (`auto/learn.py`) call `claude -p --model sonnet` through
@@ -236,6 +236,35 @@ only once clips earn money. The goal is volume: as many clips as possible.
 - Volume limits that will bite before model limits: render speed on the GTX 1060, platform spam detection on near-identical posts,
   Upload-Post caps, and campaigns paying per approved clip.
 
+### Free-model sources (21 Nov, checked the same day; Ahmad's four sources)
+Sources: openrouter.ai/collections/free-models, github.com/ClawLabsAI/free-ai-models (updated 21 Nov), datacamp.com/blog/free-ai-tools,
+kilo.ai/landing/free-models. Ahmad's rules: big "heavy" models are welcome for light work (free, so overkill is fine), and open-weights
+models count too.
+- Capacity comes from PROVIDERS (one account each), not from models: all OpenRouter `:free` models share one allowance per account
+  (20/min, 50/day; 1,000/day after a one-time $10 credit purchase, and failed calls count). Listing many OpenRouter models adds fallback
+  when one is removed, not daily volume.
+- Providers to add to the chain (base URL from the ClawLabs list; verify at build time):
+  - Groq `https://api.groq.com/openai/v1`: `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`; 30/min, 1,000/day, 8k tokens/min. No card.
+  - Google AI Studio `https://generativelanguage.googleapis.com/v1beta/openai/`: Gemini Flash + Gemma 4. Per-model limits in AI Studio.
+    Ahmad is in the EEA, so free-tier data is not used for training; the "not in user-facing apps for EEA users" rule does not apply
+    (backend, no end users). The existing `gemini` provider may already cover it.
+  - Cloudflare Workers AI `https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1`: 10,000 neurons/day, no training. Needs account id.
+  - OpenRouter `https://openrouter.ai/api/v1`, heavy models first: `nvidia/nemotron-3-ultra-550b-a55b:free` (1M ctx),
+    `openai`-free equivalents if listed, `google/gemma-4-31b-it:free`, `google/gemma-4-26b-a4b-it:free` (ClawLabs top score),
+    `nvidia/nemotron-3.5-super-vl:free`, `baidu/ernie-5.5-flash-preview:free`, `inclusionai/ling-3.2-flash:free`, `recursive/flint-v1.0:free`.
+    Do NOT set `data_collection: deny`: it drops most free models, and stream transcripts are public content.
+  - Keep from the first list: Z.ai GLM Flash, NVIDIA API catalog, AIHubMix.
+  - Pollinations `https://text.pollinations.ai` (no key, rotating models): last hosted fallback only, unreliable.
+- Skip: Cerebras (card required, 30-day trial), OVHcloud anonymous (mostly 429), Kilo (editor-only gateway; same Nemotron models are
+  on OpenRouter), Perplexity Decider, image/video/music models, tiny models (LFM3 1.7B) except as a last resort.
+- Long context matters here: the 1M-context models can take a whole VOD's candidates in one call, which means fewer requests per job.
+- Open weights, local: the existing `ollama` provider stays as the final fallback. The GTX 1060 (6 GB) is shared with Whisper and the
+  renders, so local LLM calls should only run when no render or transcription is running. Open-weights models (gpt-oss, Gemma,
+  Nemotron) are better used through the free hosted endpoints above.
+- Later idea, not now: the free `nvidia/nemotron-3.5-rerank-8b` / `embed-8b` could rank candidate windows.
+- Optional, Ahmad's call: the one-time $10 OpenRouter credit raises the free cap from 50 to 1,000 calls/day. That is the cheapest
+  capacity upgrade available.
+
 ### Master update (21 Nov, end of first master chat)
 - Posted: TikTok crazy_heist, jet-ski clip (21 Nov), logged in `D:\autoclip\auto\manual_posts.csv`. Submission to Content Rewards: by Ahmad (no bot).
 - Ahmad's rules added: no burned-in "#ad Paid partnership" (#ad in caption; `disclosure_required: false`, `ad` in required hashtags);
@@ -255,3 +284,60 @@ only once clips earn money. The goal is volume: as many clips as possible.
   also fails on the commit before the merge (it passed earlier the same day), so it looks date/clock-dependent: give it to Codex (gpt-6.1-sol medium).
   Open from the virality plan: hook safe zone/visible at t=0 (#3), facecam crop without sub counter (#4), cold open (#5), opening-frame picker (#6).
 - 21 Nov (key-setup session): `claude` CLI login DONE and verified (`find_claude()` -> `claude -p` returned ok); Twitch Client Secret RESET DONE (new secret in User env `TWITCH_CLIENT_SECRET`, 30 chars, app-token request OK). Free-model keys set on branch `claude/key-setup-751319` (see "Free-model chain").
+## Free-model chain (2026-11-21, branch `claude/free-model-chain-0660c4`): BUILT, mocked tests only
+Plan decided by Ahmad in the CoWorkOS chat (free LLMs by default; Claude and Codex stay free for real work). Built by Codex
+(gpt-6.1-sol, medium), reviewed by the build session. Provider facts and caveats: `docs/free-model-presets-verified-2026-11-21.md`.
+- Chain: `providers/chain.py` (`ChainProvider`, `complete_text`, `complete_validated`). Entries are provider BUCKETS (one account each) with
+  an ordered `models` list; model failures fall to the next model in the bucket, rate limit / daily quota / auth / connection fall to the next
+  bucket. Daily usage is counted per provider (failed calls too) in `<auto_dir>/chain-usage.json` with per-provider reset (Google: midnight
+  Pacific, others UTC); a spent bucket is skipped until reset. Per-bucket `max_prompt_tokens` guard (Groq free is 8K tokens/min, so it only
+  gets small prompts). Claude is OFF (`chain.allow_claude = false`), an explicit opt-in last entry. Local Ollama is the last free entry and is
+  skipped unless the tick lock is absent and no job is running (unknown = skipped).
+- Default order: zai-glm-flash, nvidia-nim, openrouter-free, google-ai-studio, cloudflare-workers-ai, groq, aihubmix, pollinations, ollama.
+  Change it in settings (`chain.entries`); `autoclip config chain` lists buckets, key present/missing, usage today.
+- `auto/learn.py`: weekly report on the chain (`learn.backend = chain`, the default; `claude` switches back).
+- `auto/select.py`: `selection.backend = claude | chain`. The chain path inlines `candidates.json`, `what_works.md`, the campaign yaml and the
+  /clip skill body, gets plain text back (no tools, no files), writes `highlights.json` itself, keeps `validate_highlights` and retry-with-error.
+  DEFAULT STAYS `claude` until Ahmad has seen the comparison numbers.
+- Provider and model per clip: `selection_meta.json` in the job folder, copied into the clip's DB row and tracker CSV columns
+  (`provider`, `model`); existing DBs migrate. The claude path records `claude-cli` + model. Old clips stay blank.
+- Comparison: `scripts/selection_compare.py JOB VOD [--offset-s N] [--claude] [--only a,b] [--clips-json f] [--dry-run]` scores each keyed
+  bucket/model and Claude against the top viewer clips of the VOD (recall of top-N, precision of picks). Needs a prepared job
+  (`clip stream ... --prepare-only`) and Twitch app creds (or a cached clips json). One job is a small sample: run several.
+- Verified: mocked tests only (pytest: chain fallback on 429/quota/connection/bad JSON, model fallback, daily budget + reset, persisted
+  counter, token guard, Cloudflare account id, ollama gating, Claude off by default, learn/select via chain, tracker migration). NO live
+  provider call was made (no keys exist). Preset URLs, model IDs and limits were read from each provider's own pages on 2026-11-21, not tested.
+- Preset caveats: Z.ai free IDs lowercased by inference and sit under legacy pricing; NVIDIA trial limits not published on pages read;
+  Groq free is 8K tokens/min (small prompts only); AIHubMix needs a one-time $1 top-up (10 calls total before); Google free-tier data is used
+  to improve products per the pricing page (EEA exception NOT found there: confirm at aistudio.google.com/docs/terms); Pollinations now
+  REQUIRES a key (the "no key" note was out of date); OpenRouter 50/day until $10 credit is bought.
+- Keys Ahmad adds (`autoclip config set-secret NAME`): `zai-glm-flash`, `nvidia-nim`, `openrouter-free`, `google-ai-studio`,
+  `cloudflare-workers-ai` plus `cloudflare-account-id`, `groq`, `aihubmix`, `pollinations`. Start with Z.ai, OpenRouter, Google, NVIDIA.
+- Keys set 2026-11-21 (live one-call test OK): `openrouter-free`, `google-ai-studio`, `zai-glm-flash`, `nvidia-nim`. Also set and live-tested: `groq` (all 3 models OK), `cloudflare-workers-ai` + `cloudflare-account-id` (gemma-4, gpt-oss OK; `@cf/nvidia/nemotron-3-120b-a12b` deprecated 2026-11-20, 410: remove from preset). Not set: aihubmix, pollinations. Live findings: NVIDIA `deepseek-ai/deepseek-v4-flash` (EOL 2026-08-07) and `moonshotai/kimi-k3` (EOL 2026-10-15) return 410, only `minimaxai/minimax-m3.1-flash` works: fix the preset. Some free models 429/503 transiently (OpenRouter gemma/ernie/ling, Google 3.8-flash, Z.ai 4.7-flash). `set-secret NAME --clipboard` added (reads clipboard, then clears it).
+- Next: add 2-3 keys, run `selection_compare.py` on a prepared job with `--claude`, then decide the selection default and order.
+- Known: `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire` fails on main too (clock-dependent, not touched).
+- 21 Nov (free-model chain build session): free-model chain built on branch `claude/free-model-chain-0660c4`, mocked tests only, selection default
+  still `claude` pending the comparison; see section "Free-model chain". Not pushed or merged.
+
+### Selection comparison, first live run (21 Nov, 2 jobs, small sample)
+Jobs: KreekCraft Day 2 `05a6dc5ea9164c73` (ceiling 30%: only that share of the top-10 viewer clips lies inside any candidate window) and Day 3
+`11f5c9fb80be4f45` (ceiling 50%, offset 6000 s). Recall = top-10 viewer clips touched by a pick; precision = picks touching one. Free keys live-tested.
+| Target | Day 2 recall/prec | Day 3 recall/prec |
+|---|---|---|
+| Claude sonnet (`claude -p`) | 0% / 0% | 20% / 40% |
+| google gemini-3.6-flash | 0% / 0% | 40% / 60% |
+| google gemini-3.5-flash-lite (2 picks only) | 0% / 0% | 20% / 100% |
+| openrouter nemotron-3-ultra-550b | 0% / 0% | 30% / 38% |
+| openrouter nemotron-3.5-super-vl | 0% / 0% | failed |
+| cloudflare gpt-oss-120b | 0% / 0% | 20% / 40% |
+| cloudflare gpt-oss-20b | 10% / 20% | 0% / 0% |
+Reading: one or two hits per job, so these numbers do not separate the models yet; the free models that worked are in the same range as Claude.
+Failures (kinds from the new per-model `Attempts`): groq all three = prompt over the 8K-TPM guard (Groq is for small prompts only, e.g. the weekly
+report); z.ai and openrouter gemma/ling = rate_limit or overload (transient); gemini-3.8-flash = connection/503; several = malformed or empty
+output (reasoning models); nvidia minimax = timeout/empty. Retired and removed from presets: nvidia deepseek-v4-flash, moonshot kimi-k3 (410),
+cloudflare nemotron-3-120b. All working free models stay in the chain (Ahmad: free capacity); the comparison only sets ORDER.
+Proposed order for selection (not applied, selection default still `claude`): google gemini-3.6-flash, cloudflare gpt-oss-120b, openrouter nemotron-3-ultra,
+google gemini-3.5-flash-lite, openrouter nemotron-3.5-super-vl, cloudflare gpt-oss-20b, then z.ai, nvidia, openrouter rest, google 3.8; groq last (learn only).
+Next: more jobs (Day 1, other streamers) before trusting the order; run `scripts/selection_compare.py --jobs JOB:VOD:OFFSET ... --claude`.
+- 21 Nov, Ahmad's decision: keep the chain order as is and START USING it: `selection.backend` now defaults to `chain` (was `claude`; `claude`
+  stays a config switch). Keep noting output quality per provider/model (recorded per clip) and re-order from data. Claude is not a silent fallback.

@@ -55,3 +55,4 @@ campaigns/assets/*
 
 # Finished clips waiting to be posted by hand
 to-post/
+selection_compare_*.log

@@ -97,7 +97,12 @@ class DiskConfig(_Section):
     min_free_gb: float = Field(default=10.0, gt=0)
 
 
+class LearnConfig(_Section):
+    backend: Literal["chain", "claude"] = "chain"
+
+
 class SelectionConfig(_Section):
+    backend: Literal["claude", "chain"] = "chain"
     model: str = "sonnet"
     timeout_min: int = Field(default=25, ge=1)
     max_attempts: int = Field(default=2, ge=1)
@@ -134,6 +139,7 @@ class AutoConfig(_Section):
     watch: WatchConfig = WatchConfig()
     disk: DiskConfig = DiskConfig()
     selection: SelectionConfig = SelectionConfig()
+    learn: LearnConfig = LearnConfig()
     tracker: TrackerConfig = TrackerConfig()
     throttle: ThrottleConfig = ThrottleConfig()
     submit: SubmitConfig = SubmitConfig()

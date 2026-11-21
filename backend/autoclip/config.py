@@ -53,6 +53,32 @@ class ProviderSettings(BaseModel):
     base_url: str | None = None
 
 
+class ChainEntry(BaseModel):
+    name: str
+    preset: str | None = None
+    base_url: str | None = None
+    model: str = ""  # Legacy single-model override.
+    models: list[str] = Field(default_factory=list)
+    key_name: str = ""
+    daily_requests: int | None = Field(default=None, ge=0)
+    reset: str | None = None
+    max_prompt_tokens: int | None = Field(default=None, ge=1)
+
+
+class ChainSettings(BaseModel):
+    entries: list[ChainEntry] = Field(default_factory=lambda: [
+        ChainEntry(name=name, preset=name) for name in (
+            "zai-glm-flash", "nvidia-nim", "openrouter-free", "google-ai-studio",
+            "cloudflare-workers-ai", "groq", "aihubmix", "pollinations", "ollama"
+        )
+    ])
+    allow_claude: bool = False
+    malformed_attempts: int = Field(default=2, ge=1)
+    cooldown_seconds: float = Field(default=60, ge=0)
+    request_timeout_s: float = Field(default=180, gt=0)
+    max_output_tokens: int = Field(default=8000, ge=1)
+
+
 class WhisperSettings(BaseModel):
     #: tiny | base | small | medium | large-v3 — or a local path.
     model: str = "small"
@@ -106,6 +132,7 @@ class Settings(BaseModel):
             "ollama": ProviderSettings(model="", base_url="http://localhost:11434"),
         }
     )
+    chain: ChainSettings = Field(default_factory=ChainSettings)
     whisper: WhisperSettings = Field(default_factory=WhisperSettings)
     clips: ClipSettings = Field(default_factory=ClipSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
@@ -251,3 +278,8 @@ def delete_secret(key: str, settings: Settings | None = None) -> None:
     if settings._fallback_secrets.pop(key, None) is not None:
         settings.insecure_secret_storage = bool(settings._fallback_secrets)
         save(settings)
+
+
+# Default chain secrets are also accepted by `autoclip config set-secret`.
+KEYED_PROVIDERS += tuple(entry.name for entry in ChainSettings().entries if entry.name != "ollama")
+KEYED_PROVIDERS += ("cloudflare-account-id",)
