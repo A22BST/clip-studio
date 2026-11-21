@@ -264,3 +264,5 @@ cloudflare nemotron-3-120b. All working free models stay in the chain (Ahmad: fr
 Proposed order for selection (not applied, selection default still `claude`): google gemini-3.6-flash, cloudflare gpt-oss-120b, openrouter nemotron-3-ultra,
 google gemini-3.5-flash-lite, openrouter nemotron-3.5-super-vl, cloudflare gpt-oss-20b, then z.ai, nvidia, openrouter rest, google 3.8; groq last (learn only).
 Next: more jobs (Day 1, other streamers) before trusting the order; run `scripts/selection_compare.py --jobs JOB:VOD:OFFSET ... --claude`.
+- 21 Nov, Ahmad's decision: keep the chain order as is and START USING it: `selection.backend` now defaults to `chain` (was `claude`; `claude`
+  stays a config switch). Keep noting output quality per provider/model (recorded per clip) and re-order from data. Claude is not a silent fallback.

@@ -39,6 +39,7 @@ def highlights(start, end):
 
 
 def test_selection_runs_claude_headless_and_validates(env, work):
+    env.config.selection.backend = "claude"
     seen = {}
 
     def fake(cmd, **kw):
@@ -60,6 +61,7 @@ def test_selection_runs_claude_headless_and_validates(env, work):
 
 
 def test_selection_retries_with_the_error_then_succeeds(env, work):
+    env.config.selection.backend = "claude"
     prompts = []
 
     def fake(cmd, **kw):
@@ -73,6 +75,7 @@ def test_selection_retries_with_the_error_then_succeeds(env, work):
 
 
 def test_selection_gives_up_after_max_attempts(env, work):
+    env.config.selection.backend = "claude"
     calls = []
 
     def fake(cmd, **kw):

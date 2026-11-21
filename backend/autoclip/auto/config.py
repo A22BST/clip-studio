@@ -102,7 +102,7 @@ class LearnConfig(_Section):
 
 
 class SelectionConfig(_Section):
-    backend: Literal["claude", "chain"] = "claude"
+    backend: Literal["claude", "chain"] = "chain"
     model: str = "sonnet"
     timeout_min: int = Field(default=25, ge=1)
     max_attempts: int = Field(default=2, ge=1)
