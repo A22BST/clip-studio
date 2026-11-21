@@ -249,3 +249,8 @@ only once clips earn money. The goal is volume: as many clips as possible.
 - Waiting on Ahmad: Upload-Post Basic + key, Telegram bot, `claude` login, Twitch secret reset, Whop payout check, join AsianJeff/Dylan Page,
   yes/no on downloading the Discord SFX/music packs, archive old session `local_f0829020` and (after the setup helper) the planning chat.
 - Token rule: Claude weekly budget tight; Codex does coding/research, Sonnet sessions coordinate, Opus master chats stay short.
+- 21 Nov late: virality branch merged (`61f3b31`): /clip hard rules (moment type weird / unique-situation / rage-or-shock, 3-second
+  stranger test, zero clips allowed), QA warnings (dark_opening, long_clip, hook_too_long), Twitch viewer clips as candidates, docs
+  `docs/virality-*.md`. Full suite: 807 passed, 1 failed. The failure `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire`
+  also fails on the commit before the merge (it passed earlier the same day), so it looks date/clock-dependent: give it to Codex (gpt-6.1-sol medium).
+  Open from the virality plan: hook safe zone/visible at t=0 (#3), facecam crop without sub counter (#4), cold open (#5), opening-frame picker (#6).
