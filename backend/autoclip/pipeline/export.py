@@ -11,13 +11,14 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import ExportSettings
 from ..system import report
 from . import captions as captions_module
 from . import ffmpeg
+from . import sfx as sfx_module
 from .captions import CaptionStyle
 from .layouts import Layout, LayoutPlan, build_layout_filtergraph
 from .reframe.croppath import CropPath, segment_crop_filter
@@ -68,6 +69,8 @@ class ExportRequest:
     overlay_path: Path | None = None
     #: ffmpeg -af fragment applied before loudness normalisation (e.g. profanity bleeps).
     extra_audio_filter: str = ""
+    #: Optional clip-relative payoff accents; empty preserves the legacy command.
+    sfx: list[sfx_module.SFXEvent | dict] = field(default_factory=list)
 
     @property
     def duration_s(self) -> float:
@@ -287,6 +290,10 @@ def export_clip(
     """
     settings = settings or ExportSettings()
     out_w, out_h = ratio_dimensions(request.ratio)
+    try:
+        effects = sfx_module.prepare_events(request.sfx, request.duration_s) if request.sfx else []
+    except (ValueError, ffmpeg.FFmpegError) as exc:
+        raise ExportError(f"Invalid SFX: {exc}") from exc
 
     # Each clip renders in its own workspace so concurrent exports can't collide
     # on the shared `captions.ass` name that the relative-path scheme requires.
@@ -336,6 +343,20 @@ def export_clip(
         filtergraph = _add_overlay(filtergraph, out_w, out_h)
         input_args += ["-loop", "1", "-framerate", "30", "-i", str(request.overlay_path)]
 
+    audio_args = ["-map", "0:a?", "-af", _audio_chain(request, settings)]
+    if effects:
+        first_input = 2 if request.overlay_path is not None else 1
+        for effect in effects:
+            input_args += ["-i", str(effect.path)]
+        filtergraph += ";" + sfx_module.build_filtergraph(
+            effects,
+            first_input=first_input,
+            clip_duration_s=request.duration_s,
+            stream_filter=request.extra_audio_filter,
+            final_filter=build_audio_filtergraph(settings),
+        )
+        audio_args = ["-map", "[aout]"]
+
     request.destination.parent.mkdir(parents=True, exist_ok=True)
 
     # Input and output paths are ordinary argv arguments, so they stay absolute
@@ -352,10 +373,7 @@ def export_clip(
         filtergraph,
         "-map",
         "[vout]",
-        "-map",
-        "0:a?",
-        "-af",
-        _audio_chain(request, settings),
+        *audio_args,
         *encoder_args(settings),
         "-pix_fmt",
         "yuv420p",

@@ -27,6 +27,8 @@ FIELDS = [
     "shares",
     "submitted_at",
     "estimated_usd",
+    "provider",
+    "model",
     "last_checked",
 ]
 
@@ -57,6 +59,8 @@ def append_post_rows(store: Store, config: AutoConfig) -> None:
                     "url": post["results"].get(platform, {}).get("url", ""),
                     "posted_at": post["posted_at"],
                     "title": clip["title"],
+                    "provider": clip["provider"],
+                    "model": clip["model"],
                     **counts,
                     "submitted_at": post["submitted_at"] or "",
                     "estimated_usd": counts["views"] / 1000 * rate,

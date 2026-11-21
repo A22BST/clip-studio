@@ -87,6 +87,29 @@ engine blocks it under `strict`).
 - `reaction`: reaction clips (camera large, gameplay small); forced automatically for `reaction-to-spoiler`.
 - `track`: no camera / IRL / just talking. The pipeline falls back to `track` itself if no camera is detected.
 
+## 4b. Story evidence (required for every pick)
+Every pick in highlights.json MUST include `story.setup`, `story.change` and `story.payoff`, each with
+`start_s`, `end_s` (seconds in the ORIGINAL source video, read from `transcript.json` word timestamps,
+never estimated from word indexes) and non-empty `text`:
+- setup: the context a stranger needs. change: the action, surprise or reversal. payoff: the visible
+  consequence, punchline or real reaction that delivers the hook's promise.
+```json
+"story": {
+  "setup":  {"start_s": 120.0, "end_s": 123.0, "text": "He drives onto the pier"},
+  "change": {"start_s": 128.0, "end_s": 130.0, "text": "A dog jumps on the jet ski"},
+  "payoff": {"start_s": 132.0, "end_s": 134.0, "text": "He screams 'a DOG?!'", "speech_based": true}
+}
+```
+Set `payoff.speech_based: true` when the payoff is spoken or vocal; its text must quote or describe it.
+For a visual payoff, describe what the viewer sees. All three beats sit inside the word range, in order,
+with at least 1 s (better 1-3 s of reaction) after the payoff. Boundary refinement re-checks the story
+and may widen within campaign limits or reject.
+Drop a pick whose payoff you can't explain plainly to someone who never watched the streamer, or
+whose payoff evidence or timing is uncertain. Never pad to the campaign minimum with black screens,
+loading, "Wasted" screens or unrelated footage. Usable duration = window minus black/dead spans and
+transcript gaps longer than 6 s (Whisper dropouts, cutscenes); short pauses in gameplay are fine.
+Zero picks is valid.
+
 ## 5. Write highlights.json
 Write `%USERPROFILE%\.autoclip\work\<job>\highlights.json`:
 ```json
@@ -94,13 +117,26 @@ Write `%USERPROFILE%\.autoclip\work\<job>\highlights.json`:
   "start_word_index": 1204, "end_word_index": 1390,
   "title": "...", "hook": "...", "caption": "...", "hashtags": ["GTA6", "..."],
   "score": 87, "reason": "why this is the moment (one line)",
-  "spoiler_level": "none", "layout": "facecam", "blur_word_ranges": [], "mentions": []
+  "spoiler_level": "none", "layout": "facecam", "blur_word_ranges": [], "mentions": [], "sfx": []
 }]}
 ```
 `score` is 0-100 (your confidence it performs). Sort best first. Validate: valid JSON, indexes inside the
 candidate's `first_word..last_word`, every `spoiler_level`/`layout` one of the allowed values. Read `limits` in candidates.json: required
 hashtags, mentions, `required_caption_phrases` (the caption MUST contain them), `max_title_chars`,
 `banned_words`.
+
+`sfx` is ON (Ahmad, 21 Nov): add ONE sound effect when the clip has a real payoff (crash, jump-scare,
+reveal, crash-out, fail) and leave `sfx: []` when nothing fits; never over speech that carries the joke. All 25
+sounds in the pack are cleared for Shorts, Reels and TikTok. Max 1 per clip (the renderer rejects more). An event is `{"name": "Boom", "at_s": 8.5, "gain_db": -6, "kind": "impact"}`.
+`at_s` is seconds from the final refined clip start, within the clip duration.
+Use `kind: "riser"` to align the sound's END to `at_s`; a riser beginning before
+the clip is trimmed at the front. `gain_db` defaults to -6 and is
+applied with a further -12 dB reduction to keep effects under the stream.
+Allowed names are the local audio filenames (case-insensitive, extension optional)
+under `<AUTOCLIP_HOME>/assets/sfx/`, currently
+`D:\autoclip\assets\sfx\viral-clip-sound-effects\` (for example Boom, Pop,
+BONE CRACK, Riser 2, MEME BOOM, CHA CHING). Inspect that folder for the full list;
+do not invent asset names. Stream pipeline wiring must pass this field to the exporter.
 
 ## 6. Render and report
 Run `clip stream <same vod/args as before> --campaign <name>` again (the job is reused; transcribe is cached), or

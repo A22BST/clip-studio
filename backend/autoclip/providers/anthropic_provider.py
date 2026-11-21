@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from .base import DetectionConfig, LLMProvider, ProviderError, ProviderStatus
+from .openai_provider import _translate
 
 log = logging.getLogger(__name__)
 
@@ -43,9 +44,11 @@ class AnthropicProvider(LLMProvider):
         kwargs = {"api_key": self.api_key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        return AsyncAnthropic(**kwargs)
+        return AsyncAnthropic(**kwargs, max_retries=0, timeout=60.0)
 
-    async def _complete(self, system: str, user: str, config: DetectionConfig) -> str:
+    async def _complete(
+        self, system: str, user: str, config: DetectionConfig, *, json_mode: bool = True
+    ) -> str:
         client = self._client()
         try:
             message = await client.messages.create(
@@ -55,17 +58,14 @@ class AnthropicProvider(LLMProvider):
                 system=system,
                 messages=[
                     {"role": "user", "content": user},
-                    # Prefilling the assistant turn with an opening brace is the
-                    # cheapest way to stop Claude prepending a sentence of prose.
-                    {"role": "assistant", "content": "{"},
+                    *([{"role": "assistant", "content": "{"}] if json_mode else []),
                 ],
             )
         except Exception as exc:
             raise _translate(exc, self.name, self.model) from exc
 
         text = "".join(block.text for block in message.content if hasattr(block, "text"))
-        # Put back the brace we prefilled.
-        return "{" + text
+        return ("{" if json_mode else "") + text
 
     async def health_check(self) -> ProviderStatus:
         if not self.api_key:
@@ -86,34 +86,3 @@ class AnthropicProvider(LLMProvider):
         return ProviderStatus(
             name=self.name, available=True, detail=self.model, models=SUGGESTED_MODELS
         )
-
-
-def _translate(exc: Exception, provider: str, model: str) -> ProviderError:
-    message = str(exc)
-    lowered = message.lower()
-
-    if "authentication" in lowered or "invalid x-api-key" in lowered or "401" in lowered:
-        return ProviderError(
-            "Anthropic rejected the API key.",
-            provider=provider,
-            hint="Re-add it with `autoclip config set-secret anthropic`.",
-        )
-    if "rate limit" in lowered or "429" in lowered:
-        return ProviderError(
-            "Anthropic rate limit reached.",
-            provider=provider,
-            hint="Wait a moment and retry the job, or switch to a different provider.",
-        )
-    if "not_found" in lowered or "model" in lowered and "404" in lowered:
-        return ProviderError(
-            f"Anthropic does not recognise the model '{model}'.",
-            provider=provider,
-            hint=f"Try one of: {', '.join(SUGGESTED_MODELS)}",
-        )
-    if "credit" in lowered or "billing" in lowered:
-        return ProviderError(
-            "Anthropic reports a billing or credit problem.",
-            provider=provider,
-            hint="Check your plan at console.anthropic.com.",
-        )
-    return ProviderError(f"Anthropic request failed: {message}", provider=provider)

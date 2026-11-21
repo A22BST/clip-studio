@@ -13,13 +13,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..db.models import Clip, new_id
 from ..providers import ClipCandidate, DetectionConfig, LLMProvider, TranscriptWindow
 from . import boundaries
 from .prepare import Silence
-from .transcript import Transcript
+from .transcript import Transcript, Word
 
 log = logging.getLogger(__name__)
 
@@ -39,13 +44,183 @@ LONG_CLIP_S = 45.0
 MAX_HOOK_WORDS = 6
 
 
+class StoryBeat(BaseModel):
+    """A source-time interval and a stranger-readable account of what happens."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    text: str
+    speech_based: bool = False
+
+    @model_validator(mode="after")
+    def ordered(self) -> StoryBeat:
+        if self.end_s <= self.start_s:
+            raise ValueError("story beat end_s must exceed start_s")
+        return self
+
+
+class Story(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    setup: StoryBeat
+    change: StoryBeat
+    payoff: StoryBeat
+
+    @model_validator(mode="after")
+    def ordered(self) -> Story:
+        if not self.setup.start_s <= self.change.start_s <= self.payoff.start_s:
+            raise ValueError("story must progress from setup to change to payoff")
+        return self
+
+
+class StoryPick(ClipCandidate):
+    """Stream pick schema; legacy picks load with an explicit warning."""
+
+    story: Story | None = None
+
+    @model_validator(mode="after")
+    def warn_legacy(self) -> StoryPick:
+        if self.story is None:
+            log.warning("story_missing warning: legacy pick %r has no story", self.title)
+        return self
+
+
+@dataclass(frozen=True)
+class StoryVerdict:
+    status: Literal["ok", "widen", "reject"]
+    reasons: tuple[str, ...]
+    start_s: float
+    end_s: float
+    clean_duration_s: float
+
+
+def subtract_dark_spans(
+    start_s: float, end_s: float, dark_spans: list[tuple[float, float]]
+) -> float:
+    """Return duration outside the union of source-time spans (no double counting).
+
+    Accepts blackdetect intervals already converted to source time. cutqa only
+    samples opening pixels; it does not currently expose a blackdetect parser.
+    The same interval subtraction is used for silence and transcript gaps.
+    """
+    cursor, removed = start_s, 0.0
+    for start, end in sorted(dark_spans):
+        if not math.isfinite(start) or not math.isfinite(end) or end < start:
+            raise ValueError("dead spans must be finite, ordered source-time intervals")
+        left, right = max(start_s, start, cursor), min(end_s, end)
+        if right > left:
+            removed += right - left
+            cursor = right
+    return max(0.0, end_s - start_s - removed)
+
+
+#: Transcript gaps longer than this count as unavailable footage (Whisper dropout / cutscene).
+LONG_GAP_S = 6.0
+
+
+def check_story(
+    pick: ClipCandidate,
+    refined_bounds: boundaries.Boundary | tuple[float, float],
+    transcript_words: list[Word],
+    silences: list[Silence],
+    dark_spans: list[tuple[float, float]] | None = None,
+    *,
+    min_duration_s: float = 20.0,
+    max_duration_s: float = 90.0,
+) -> StoryVerdict:
+    """Check story survival without I/O or mutations.
+
+    Black/dead spans and LONG transcript gaps (> LONG_GAP_S, e.g. a Whisper dropout or a
+    cutscene) count as unavailable footage. Short pauses and plain silences do not: GTA
+    moments are often visual (a crash, a build-up before a scream). Widen only inside the original
+    word-range envelope: unrelated footage must never pad a weak pick. Legacy
+    picks pass with a warning reason, preserving existing workflows.
+    """
+    if not 0 < min_duration_s <= max_duration_s or not math.isfinite(max_duration_s):
+        raise ValueError("invalid campaign duration limits")
+    if isinstance(refined_bounds, tuple):
+        start, end = refined_bounds
+    else:
+        start, end = refined_bounds.start_s, refined_bounds.end_s
+    if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end):
+        return StoryVerdict("reject", ("invalid_bounds",), start, end, 0.0)
+    story = getattr(pick, "story", None)
+    if story is None:
+        return StoryVerdict("ok", ("story_missing warning: legacy pick",), start, end, end - start)
+    story = Story.model_validate(story)
+    words = sorted(transcript_words, key=lambda word: word.start)
+    dead = list(dark_spans or [])  # silences are NOT dead footage (visual gameplay)
+
+    def clean(a: float, b: float) -> float:
+        gaps = []
+        cursor = a
+        for word in words:
+            if word.end <= a or word.start >= b:
+                continue
+            if word.start - cursor > LONG_GAP_S:
+                gaps.append((cursor, word.start))
+            cursor = max(cursor, word.end)
+        if b - cursor > LONG_GAP_S:
+            gaps.append((cursor, b))
+        return subtract_dark_spans(a, b, dead + gaps)
+
+    def problems(a: float, b: float) -> list[str]:
+        reasons = []
+        if not story.setup.text.strip():
+            reasons.append("setup_missing")
+        if not story.change.text.strip():
+            reasons.append("change_missing")
+        for name in ("setup", "change", "payoff"):
+            beat = getattr(story, name)
+            if beat.start_s < a or beat.end_s > b:
+                reasons.append(f"{name}_outside_bounds")
+        payoff = story.payoff
+        speech = payoff.speech_based or any(
+            w.text.strip() and w.start < payoff.end_s and w.end > payoff.start_s for w in words
+        )
+        if not payoff.text.strip():
+            reasons.append("payoff_text_empty_speech" if speech else "payoff_missing")
+        if b - payoff.end_s < 1.0:
+            reasons.append("payoff_in_last_second")
+        if b - a > max_duration_s:
+            reasons.append("duration_over_maximum")
+        if clean(a, b) < min_duration_s:
+            reasons.append("clean_duration_under_minimum")
+        return reasons
+
+    reasons = problems(start, end)
+    duration = clean(start, end)
+    if not reasons:
+        return StoryVerdict("ok", (), start, end, duration)
+    # Recover the original story, never invent missing setup or payoff evidence.
+    if words and 0 <= pick.start_word_index <= pick.end_word_index < len(transcript_words):
+        raw_start = transcript_words[pick.start_word_index].start
+        raw_end = transcript_words[pick.end_word_index].end
+        proposed_start = min(start, story.setup.start_s)
+        proposed_end = max(end, story.payoff.end_s + 1.0, story.change.end_s, story.setup.end_s)
+        if clean(proposed_start, proposed_end) < min_duration_s:
+            proposed_start, proposed_end = min(start, raw_start), max(end, raw_end)
+        if (
+            raw_start <= proposed_start
+            and proposed_end <= raw_end
+            and not problems(proposed_start, proposed_end)
+        ):
+            return StoryVerdict(
+                "widen",
+                tuple(reasons),
+                proposed_start,
+                proposed_end,
+                clean(proposed_start, proposed_end),
+            )
+    return StoryVerdict("reject", tuple(reasons), start, end, duration)
+
+
 def quality_warnings(duration_s: float, hook: str) -> list[str]:
     """Editorial warnings for validated highlights; never change campaign limits."""
     notes: list[str] = []
     if duration_s > LONG_CLIP_S:
         notes.append(
-            f"long_clip warning: duration {duration_s:.1f}s > {LONG_CLIP_S:g}s "
-            "(target 20-35s)"
+            f"long_clip warning: duration {duration_s:.1f}s > {LONG_CLIP_S:g}s (target 20-35s)"
         )
     words = len(hook.split())
     if words > MAX_HOOK_WORDS:
@@ -213,6 +388,7 @@ def build_clips(
             silences=silences or [],
             min_duration_s=config.min_duration_s,
             max_duration_s=config.max_duration_s,
+            pick=candidate,
         )
         if boundary is None:
             log.debug(
