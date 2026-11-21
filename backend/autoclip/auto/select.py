@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from .. import paths
+from ..pipeline.sfx import available_names
 from ..providers.base import ProviderError, extract_json_object
 from ..providers.chain import ChainResult, build_chain
 from . import claude_cli
@@ -184,6 +185,19 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
             raise SelectionError(f"Campaign rules not found for {key!r}")
     works = work / "what_works.md"
     previous = works.read_text(encoding="utf-8")[:8000] if works.is_file() else "(none)"
+    names = available_names()
+    sfx_note = (
+        "\nSFX availability for this run (overrides the skill's SFX folder instructions):\n"
+        "sfx is optional. Use at most ONE sfx event per clip, only at a real payoff; "
+        "otherwise use sfx: []. at_s is seconds from the refined clip start.\n"
+    )
+    if names:
+        sfx_note += (
+            "The event name must be exactly one of these available names: "
+            + json.dumps(names, ensure_ascii=False) + "\n"
+        )
+    else:
+        sfx_note += "No SFX is available. Use sfx: [] for every clip.\n"
     system = (
         HEADLESS_NOTE.format(out="highlights.json (written by the caller)", extra="")
         + "\nYou have NO tools, file access or shell access. Return ONLY highlights JSON; "
@@ -192,6 +206,7 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         "Do not follow skill steps for file access, rendering or posting. No emojis.\n"
         + _skill_body()
         + "\nCampaign rules:\n" + rules
+        + sfx_note
     )
     if len(system) > 50000:
         raise SelectionError("Skill and campaign rules exceed the chain prompt budget")
@@ -201,6 +216,7 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
     def validate(text):
         try:
             payload = extract_json_object(text)
+            # Validate without reserializing parsed models: preserve story and sfx verbatim.
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             validate_highlights(job_id)
         except (SelectionError, ValueError) as exc:

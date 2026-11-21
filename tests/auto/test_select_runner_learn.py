@@ -302,3 +302,56 @@ def test_chain_selection_surfaces_attempts(env, work, monkeypatch):
         select.run_selection(JOB, env.config)
     assert caught.value.attempts == attempts
     assert "free/test=timeout; other/next=skipped:cooldown" in str(caught.value)
+
+
+@pytest.mark.parametrize("library", ["populated", "empty", "missing"])
+def test_chain_selection_sfx_prompt_and_preserves_fields(env, work, monkeypatch, library):
+    from autoclip.providers.chain import ChainResult
+
+    # env sets AUTOCLIP_HOME to a temporary directory; never inspect real assets.
+    sfx_dir = paths.root() / "assets" / "sfx"
+    if library != "missing":
+        sfx_dir.mkdir(parents=True)
+    if library == "populated":
+        (sfx_dir / "Boom.wav").write_bytes(b"fake audio")
+        pack = sfx_dir / "pack"
+        pack.mkdir()
+        (pack / "Riser 2.mp3").write_bytes(b"fake audio")
+        (pack / "ignore.txt").write_text("not audio", encoding="utf-8")
+
+    payload = json.loads(highlights(120, 300))
+    clip = payload["clips"][0]
+    clip["story"] = {
+        "setup": {"start_s": 12, "end_s": 14, "text": "He approaches the ramp"},
+        "change": {"start_s": 15, "end_s": 17, "text": "The car flips"},
+        "payoff": {"start_s": 18, "end_s": 20, "text": "He gasps", "speech_based": True},
+    }
+    clip["sfx"] = [{"name": "Boom", "at_s": 6.5, "gain_db": -9, "kind": "impact"}]
+    if library != "populated":
+        clip["sfx"] = []
+    prompts = []
+
+    class Chain:
+        def complete_validated(self, system, user, validate, **kwargs):
+            prompts.append(system)
+            response = json.dumps(payload)
+            validate(response)
+            return response, ChainResult("free", "test")
+
+    env.config.selection.backend = "chain"
+    monkeypatch.setattr(select, "build_chain", Chain)
+    out = select.run_selection(JOB, env.config)
+    note = prompts[0].split("SFX availability for this run", 1)[1]
+    assert "sfx is optional" in note
+    assert "at most ONE sfx event per clip" in note
+    assert "only at a real payoff" in note and "otherwise use sfx: []" in note
+    assert "at_s is seconds from the refined clip start" in note
+    if library == "populated":
+        assert 'exactly one of these available names: ["Boom", "Riser 2"]' in note
+        assert "ignore" not in note
+    else:
+        assert "No SFX is available. Use sfx: [] for every clip." in note
+    assert json.loads(out.read_text(encoding="utf-8")) == payload
+    before = out.read_bytes()
+    assert select.validate_highlights(JOB) == 1
+    assert out.read_bytes() == before

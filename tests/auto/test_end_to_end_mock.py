@@ -147,7 +147,8 @@ def test_vod_to_post_to_tracker_with_pause(env, monkeypatch):
     times = sorted(parse_iso(p["scheduled_for"]) for p in posts)
     assert times[1] - times[0] >= timedelta(minutes=60)  # platforms are staggered 1-2 h apart
     assert times[2] - times[1] >= timedelta(minutes=60)
-    far = now + timedelta(hours=12)  # everything is due by then
+    # The posting window can stagger later platforms into the next day.
+    far = times[-1] + timedelta(seconds=1)  # every scheduled post is due
     tick.post_cycle(env.store, env.config, notifier, publisher, now=far, gate_kwargs=kw)
     assert publisher.uploads == [] and {p["status"] for p in env.store.list_posts()} == {"queued"}
     assert env.store.pause_file.exists()  # the PAUSE flag file is the kill switch
