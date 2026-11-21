@@ -341,3 +341,27 @@ google gemini-3.5-flash-lite, openrouter nemotron-3.5-super-vl, cloudflare gpt-o
 Next: more jobs (Day 1, other streamers) before trusting the order; run `scripts/selection_compare.py --jobs JOB:VOD:OFFSET ... --claude`.
 - 21 Nov, Ahmad's decision: keep the chain order as is and START USING it: `selection.backend` now defaults to `chain` (was `claude`; `claude`
   stays a config switch). Keep noting output quality per provider/model (recorded per clip) and re-order from data. Claude is not a silent fallback.
+
+### Master chat 2 update (21-22 Nov)
+Merged on main (NOT pushed since `27beed2`; Ahmad said not to push the free-chain merge):
+- Date-dependent test fixed; SFX layer (`pipeline/sfx.py`, 1 effect per clip, -18 dB under the stream, pack in `D:\autoclip\assets\sfx\`,
+  `SOURCE.md`; all 25 sounds cleared by Ahmad, effect name logged per clip in report.md); story check (`check_story`, skill section 4b, dead footage =
+  black spans + transcript gaps > 6 s); facecam crop (cover-fit panel, whole head with headroom, edge-trim, 30/70); SFX + story wired into
+  `stream/pipeline.py`; same-file `--highlights` crash fixed; UTF-8 for the `clip stream` subprocess (emoji hooks crashed on cp1252);
+  free-chain prompt now carries measured timestamped transcript lines and a tight 25-60 s length rule; free-chain merge `c59020b` by the parent chat.
+- gta6-clipper trial: safety gate FAILED in the static read (reads `%USERPROFILE%\.clipper\blotato.env`, writes outside its folder, self-update);
+  nothing was run; verdict "ideas only" (`D:\gta6-clipper-trial\REPORT.md`). Ahmad later said "run it with everything on": NOT done yet (Codex limit),
+  limits to keep: KreekCraft only, no Claude for smart mode, no Blotato, scrubbed env, record hash before/after self-update.
+- Research: `docs/free-tools-research.md` (top-10). Key finding: candidate RECALL is the weak spot (30-50% of top viewer clips are inside any
+  window), so vision judge + audio event tagging matter more than another text LLM.
+- Day 4 dry run (`clip-auto tick --dry-run`, VOD 2936183180, free chain: openrouter baidu/ernie-5.5-flash-preview): end to end OK (2 clips rendered,
+  6 would-post, nothing uploaded), BUT frame check says neither clip is postable: the tiger clip is dark with the tiger barely visible, 49 s, cut-point
+  warnings; the "Rat Man room" clip shows sexual/BDSM content (ad-unsafe). Both got QA 90 and would have been AUTO-APPROVED.
+  => Before going live: add a vision judge + a sexual-content gate (transcript keywords + frame check) ahead of auto-approve, and keep `to-post/` empty today.
+- Crash-out detector (`codex/crashout-detector`, uncommitted in its worktree): works but with the 15/h cap both known moments (jet-ski, tiger) are
+  dropped (uncapped coverage 59% / 66%). Third pass (diverse ranking per signal family + time bucket) pending; if it can't hit them without
+  hard-coding, ship with `voice_jump` OFF by default.
+- Codex usage limit hit; resets 22 Nov 02:52. Codex CLI has no `--effort`: use `--model gpt-6.1-sol -c model_reasoning_effort=medium`.
+  Codex's writable root is the session's current folder: `cd` into the worktree before launching a Codex job.
+- Open for Ahmad: Upload-Post key, Telegram bot, Twitch secret reset, Whop payout check, join AsianJeff + Dylan Page, jet-ski clip by hand on
+  Instagram + YouTube Shorts (22 Nov) and submit each link within 30 min.
