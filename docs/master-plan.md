@@ -7,9 +7,9 @@ Owners: **Ahmad**, **Master** (this Opus session: planning, review, merges), **S
 ## A. First real clips posted (target: 21-22 Nov)
 | # | Step | Owner | Done when | Ahmad does |
 |---|---|---|---|---|
-| A1 | Download the official "KreekCraft Overlay" (636 kB, campaign Drive) to `campaigns/assets/kreekcraft-logo.png` | Day-0 helper (has the browser) | File exists, rules check passes on a real clip | Says **yes** |
+| A1 | DONE 20 Nov (2172x724 RGBA PNG, kept out of git). Download the official "KreekCraft Overlay" (636 kB, campaign Drive) to `campaigns/assets/kreekcraft-logo.png` | Day-0 helper (has the browser) | File exists, rules check passes on a real clip | Says **yes** |
 | A2 | Running (Codex, branch `codex/hook-size`). Bigger hook + `#ad` text, kept off the face box (FACECAM and REACTION) | Codex gpt-6.1-sol medium, reviewed by Master | Frame check: hook >= 2x current size, readable on a phone, tests pass | - |
-| A3 | Render postable clips from the newest KreekCraft VOD with the real overlay (`clip stream ... --campaign kreekcraft-gta6`) | Sonnet session | 5-8 clips pass rules + QA >= 90, frames checked by Master | - |
+| A3 | Running: Day 3 VOD 2934981732, 1:40-4:00, prepare started 21 Nov. Render postable clips from the newest KreekCraft VOD with the real overlay (`clip stream ... --campaign kreekcraft-gta6`) | Sonnet session | 5-8 clips pass rules + QA >= 90, frames checked by Master | - |
 | A4 | Ahmad sees the best 3 finished clips (only finished clips) | Master | Ahmad has watched them | Watches 3 clips (5 min) |
 | A5 | Upload-Post Basic paid, 3 accounts connected, `UPLOAD_POST_API_KEY` saved (clipboard method) | Ahmad + Day-0 helper | Key set (length check only) | Pays, connects, saves key |
 | A6 | Telegram bot (BotFather), `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` saved | Ahmad + Day-0 helper | Both set | Creates bot, saves values |

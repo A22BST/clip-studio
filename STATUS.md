@@ -192,3 +192,19 @@ Ahmad's decisions: posting is fully automatic through Upload-Post Basic ($24/mon
   missing from the main `.venv` because another process holds `clip.exe` (re-run `uv pip install -e ".[auto]"` when it exits; Task Scheduler uses
   `python -m autoclip.auto.cli`, so nothing depends on it); secrets (`UPLOAD_POST_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) still unset;
   nothing was run against the real services.
+
+## Project master session (2026-11-20/21, Opus): current state
+Owner of the overall plan: `docs/master-audit.md` (audit) and `docs/master-plan.md` (ordered steps A/B/C with owners).
+Handover from the planning chat: `docs/setup/handover-master.md`; its setup files are rescued in `docs/setup/`.
+- Done: audit + plan; automation merged into `main` and pushed; bigger hook/#ad text (Codex, `4b1d104`); logo moved below the hook (`4afbb46`);
+  fully automatic mode merged (`5701044`, Ahmad confirmed "fully automatic" on 21 Nov); official KreekCraft overlay at
+  `campaigns/assets/kreekcraft-logo.png` (2172x724 RGBA, git-ignored because the repo is public); fused hype tested and NOT adopted (45%, stop rule).
+- Decisions by Ahmad: fully automatic posting (no tap); first clip posted by hand by Ahmad; TikTok handle `crazy_heist`; USB stick D: (NTFS,
+  label CLIPDATA, 58 GB) is the data drive from now on (move `AUTOCLIP_HOME` there).
+- Running / next: Day 2 re-render with the real overlay (job `05a6dc5ea9164c73`) -> frame check -> send Ahmad "a dog on a jet ski" for a hand post;
+  Day 3 (VOD 2934981732, 1:40-4:00) downloaded, transcription hit MemoryError while the render ran: re-run `clip stream ... --prepare-only` alone;
+  then move `~/.autoclip` to `D:\autoclip` and set User env `AUTOCLIP_HOME`.
+- Waiting on Ahmad: Upload-Post Basic + `UPLOAD_POST_API_KEY`; Telegram bot + `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`; `claude` CLI login;
+  Twitch Client Secret reset; archive the old automation session (`local_f0829020`) from the sidebar.
+- Sessions: build session 1 and fused-hype told to stop (done). Setup helper `local_71215f0d` walks Ahmad through Upload-Post/Telegram.
+  New sessions are started by the master so they report to it.
