@@ -141,7 +141,7 @@ Opus review result (before these additions): no path posted without rules + appr
 - MAJOR (fixed): a failed/denied post re-queued the same clip (duplicate upload risk): now the clip is retired (`post_failed`/`expired`), and the idempotency key is per clip + platform.
 - MAJOR (fixed): `TickLock` used `os.kill(pid, 0)`, which TERMINATES a process on Windows: replaced with a safe liveness check.
 - MAJOR (fixed): a Telegram group chat id is refused (any member could approve).
-- Open MINOR items: the upload re-reads the file after the hash check (copy to an immutable `approved/<sha>.mp4` would close it); an old preview's Approve
+- Open MINOR items (ALL CLOSED in build session 3, see below): the upload re-reads the file after the hash check (copy to an immutable `approved/<sha>.mp4` would close it); an old preview's Approve
   button approves the newest version after a hook edit; a dismissed Discord edit modal leaves the clip in `editing`; httpx INFO logging could show the Telegram
   token URL if logging is ever raised to INFO; the hand-post message includes the local file path.
 - Bug found by the new end-to-end test and fixed: with one post row per platform the gate rejected the 2nd and 3rd platform after the 1st marked the clip `posted`.
@@ -152,3 +152,32 @@ One-way Telegram ping is ON whenever `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
 submit to Content Rewards now (30 min)", campaign, deadline, URL on its own line; reminders at +10 and +20 min until submitted; throttle, pause and
 removal notices. Telegram commands (`/pause /resume /status /submitted <url>`, only from `TELEGRAM_CHAT_ID`) work when the Telegram bot runs, i.e. with
 `chat: telegram`; in Discord mode the Telegram side is send-only and `/submitted` is done with the Submitted button or by the Discord bot.
+
+## Build session 3 (2026-11-21): fully automatic mode is the shipped default (branch `claude/auto-level2-5368f5`)
+Ahmad's decisions: posting is fully automatic through Upload-Post Basic ($24/month), NO human approval; Telegram is a one-way ping plus
+`/pause /resume /status /submitted`; Discord is dropped from the default path (code kept, `chat: discord` still works).
+- Config: `docs/auto-config.example.yaml` is the template (`chat: telegram`, `level: 2`, `auto_approve.enabled: true`, `min_qa: 90`,
+  `manual_platforms: []`, safe-pace values). `clip-auto init-config [--force]` copies it to `~/.autoclip/auto/config.yaml` (written for this
+  laptop; `clip-auto status` shows "Mode: level 2 fully automatic ..."). Code defaults stay fail-closed (level 1, no auto-approve) when the
+  file is missing; `AutoConfig.chat` default is now `telegram`, `manual_platforms` default `[]`.
+- Upload-Post pricing (checked 2026-11-21 on upload-post.com/pricing and docs): TikTok is NOT on the Free plan but IS included from Basic
+  ($24/month, unlimited uploads, 5 profiles). So `manual_platforms: []`. Unverified live: TikTok direct-post privacy (`PUBLIC_TO_EVERYONE`) for a
+  brand-new account; check on the first live post.
+- Campaign `campaigns/auto/kreekcraft-gta6.yaml`: `budget_usd: 6045`, new `cap_per_clip_usd: 300` (budget estimate counts at most $300 per post),
+  `ends_at: null` (the page shows no end date), `submit_url` = the campaign page. Rate $1/1k is in `campaigns/kreekcraft-gta6.yaml`.
+- Level 2: auto-approve runs in `post_cycle`; below `min_qa` a clip is rejected and never sent; above it the chat gets a FYI preview with only a
+  Reject button ("AUTO-APPROVED ... posts after the 60 min review window"). Every post still goes through the whole `gate.py` (tested: raw-cinematic,
+  pause, QA, caps). "Posted on <platform>, submit now" now shows the deadline in Copenhagen time and UTC plus the URL; a reminder goes out at +20 min
+  (`submit.reminder_minutes: [20]`, then "Deadline passed") until `/submitted`. `/submitted` without a URL logs the only waiting post, else lists them.
+- `clip-auto tick --dry-run` (also `post-due --dry-run`): watcher, jobs, selection, previews, auto-approve and scheduling run for real; the upload does
+  not. Each queued post gets one "WOULD POST" (or "WOULD NOT POST" + gate reasons) ping, evaluated at its scheduled time; nothing is claimed or counted.
+  A normal tick afterwards posts the same queue (so a dry run on a real VOD leaves approved clips queued).
+- MINOR items closed: (1) approval copies the clip to read-only `~/.autoclip/auto/approved/<sha>.mp4` (hash taken from the copy) and the clip path
+  switches to it in the same transaction, so what is uploaded is what was approved; (2) Approve buttons carry a 12-char preview token (`a:<id>:<token>`):
+  an old preview cannot approve a newer version; (3) clips stuck in `editing` return to review after 10 min (`restore_stale_edits`, runs every cycle);
+  (4) httpx/httpcore forced to WARNING on package import and in the CLI/bot entry points (Telegram token URL never logged); (5) hand-post message no
+  longer has the file path and every chat message passes `redact_paths`.
+- Not done / for later: approved copies are never deleted (disk use grows ~10-30 MB per clip; add cleanup after posting); `clip-auto.exe` launcher is
+  missing from the main `.venv` because another process holds `clip.exe` (re-run `uv pip install -e ".[auto]"` when it exits; Task Scheduler uses
+  `python -m autoclip.auto.cli`, so nothing depends on it); secrets (`UPLOAD_POST_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) still unset;
+  nothing was run against the real services.

@@ -76,15 +76,22 @@ def post_cycle(
     *,
     now: datetime | None = None,
     gate_kwargs: dict[str, Any] | None = None,
+    dry_run: bool = False,
 ) -> dict[str, int]:
-    """The cheap half: previews for new clips, scheduling of approved ones, due posts, reminders."""
+    """The cheap half: previews for new clips, scheduling of approved ones, due posts, reminders.
+
+    ``dry_run``: everything except the upload; queued posts only produce "WOULD POST" pings."""
+    approval.restore_stale_edits(store, now)
     previews = approval.send_pending_previews(store, notifier, config, now)
     approval.auto_approve_pending(store, config, now)
     schedule.expire_stale(store, config, now)
     scheduled = poster.schedule_approved(store, config, now)
-    posted = poster.post_due(store, config, notifier, client, now=now, gate_kwargs=gate_kwargs)
-    submit.send_reminders(store, notifier, now)
-    return {"previews": previews, "scheduled": len(scheduled), "posted": len(posted)}
+    posted = poster.post_due(
+        store, config, notifier, client, now=now, gate_kwargs=gate_kwargs, dry_run=dry_run
+    )
+    submit.send_reminders(store, notifier, now, config.submit.reminder_minutes)
+    key = "would_post" if dry_run else "posted"
+    return {"previews": previews, "scheduled": len(scheduled), key: len(posted)}
 
 
 def tick(
@@ -98,8 +105,11 @@ def tick(
     process: Callable[..., int] = runner.process_job,
     max_jobs: int = 3,
     gate_kwargs: dict[str, Any] | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {"new_jobs": 0, "jobs_run": 0, "clips": 0, "skipped": ""}
+    if dry_run:
+        summary["dry_run"] = True
     if store.is_paused():
         summary["skipped"] = "paused: no new jobs"
     else:
@@ -120,7 +130,11 @@ def tick(
                     break
                 summary["clips"] += process(store, config, job)
                 summary["jobs_run"] += 1
-    summary.update(post_cycle(store, config, notifier, client, now=now, gate_kwargs=gate_kwargs))
+    summary.update(
+        post_cycle(
+            store, config, notifier, client, now=now, gate_kwargs=gate_kwargs, dry_run=dry_run
+        )
+    )
     try:
         runner.cleanup_sources(store, config)
     except OSError as exc:

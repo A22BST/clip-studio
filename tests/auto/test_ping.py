@@ -73,6 +73,7 @@ def test_submitted_by_url_marks_the_post(env, make_clip):
 def test_ping_is_on_whenever_telegram_secrets_are_set(env, monkeypatch):
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "d")
     monkeypatch.setenv("DISCORD_CHANNEL_ID", "1")
+    env.config.chat = "discord"  # the legacy backend; Telegram is the default and is the chat itself
     notifier = cli._notifier(env.config)
     assert isinstance(notifier, CompositeNotifier)  # TELEGRAM_* come from the fixture
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN")

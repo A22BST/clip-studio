@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from . import secrets
-from .notify import Buttons, NotifyError
+from .notify import Buttons, NotifyError, redact_paths
 
 API = "https://discord.com/api/v10"
 MAX_UPLOAD_BYTES = 9 * 1024 * 1024  # regular servers allow 10 MB per upload
@@ -70,13 +70,13 @@ class DiscordNotifier:
         return response.json()
 
     def send_text(self, text: str, buttons: Buttons | None = None) -> int | None:
-        payload: dict[str, Any] = {"content": text[:1990], "allowed_mentions": {"parse": []}}
+        payload: dict[str, Any] = {"content": redact_paths(text)[:1990], "allowed_mentions": {"parse": []}}
         if buttons:
             payload["components"] = components(buttons)
         return int(self._post(json=payload)["id"])
 
     def send_video(self, path: Path, caption: str, buttons: Buttons | None = None) -> int | None:
-        title, description = split_caption(caption)
+        title, description = split_caption(redact_paths(caption))
         payload: dict[str, Any] = {
             "embeds": [{"title": title, "description": description, "color": 0x5865F2}],
             "allowed_mentions": {"parse": []},

@@ -45,7 +45,7 @@ def test_preview_once_with_buttons_and_original_hash(clip_store):
     for part in ("Title", "Hook", "Caption", "#gta6", "90", "reaction", "none", "campaign"):
         assert part in caption
     assert [[b.callback_data for b in row] for row in buttons] == [
-        [f"a:{clip_id}", f"r:{clip_id}"],
+        [f"a:{clip_id}:{store.get_clip(clip_id)['previewed_sha256'][:12]}", f"r:{clip_id}"],
         [f"e:{clip_id}"],
     ]
     clip = store.get_clip(clip_id)

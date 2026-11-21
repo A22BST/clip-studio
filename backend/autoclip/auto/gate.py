@@ -153,7 +153,9 @@ def _evaluate(
         deny.append(why)
     campaign = auto.campaign
     if auto.meta.budget_usd:
-        spend = _estimated_earnings(store, clip["campaign_key"], campaign.rate_per_1k_usd)
+        spend = _estimated_earnings(
+            store, clip["campaign_key"], campaign.rate_per_1k_usd, auto.meta.cap_per_clip_usd
+        )
         if spend >= auto.meta.budget_usd:
             deny.append(f"campaign budget reached (~${spend:.0f} of ${auto.meta.budget_usd:g})")
 
@@ -212,10 +214,14 @@ def _evaluate(
     return deny
 
 
-def _estimated_earnings(store: Store, campaign_key: str, rate_per_1k: float) -> float:
-    total = 0
+def _estimated_earnings(
+    store: Store, campaign_key: str, rate_per_1k: float, cap_per_clip: float | None = None
+) -> float:
+    total = 0.0
     for post in store.list_posts("posted"):
         clip = store.get_clip(post["clip_id"])
         if clip and clip["campaign_key"] == campaign_key:
-            total += sum(m["views"] for m in store.latest_metrics(post["id"]).values())
-    return total / 1000.0 * rate_per_1k
+            views = sum(m["views"] for m in store.latest_metrics(post["id"]).values())
+            earned = views / 1000.0 * rate_per_1k
+            total += min(earned, cap_per_clip) if cap_per_clip else earned
+    return total

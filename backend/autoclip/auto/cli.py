@@ -15,6 +15,11 @@ app = typer.Typer(name="clip-auto", help="Clip Studio automation layer.", no_arg
 console = Console()
 
 
+@app.callback()
+def _main() -> None:
+    secrets.harden_logging()  # httpx INFO logs would print the Telegram token URL
+
+
 def _notifier(config=None):
     """Approval chat (Discord by default) + a one-way Telegram ping when its secrets are set."""
     from .notify import CompositeNotifier, RecordingNotifier, TelegramNotifier
@@ -50,7 +55,13 @@ def _client(config):
 
 
 @app.command()
-def tick() -> None:
+def tick(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Do everything except the upload; send 'WOULD POST' pings instead (first live test).",
+    ),
+) -> None:
     """Watch for VODs, run queued jobs, send previews, post due clips (Task Scheduler, 30 min)."""
     from . import tick as tick_mod
 
@@ -59,8 +70,22 @@ def tick() -> None:
         if not lock.held:
             console.print("Another tick is running: exiting.")
             raise typer.Exit(0)
-        summary = tick_mod.tick(store, config, _notifier(config), client=_client(config))
+        client = None if dry_run else _client(config)
+        summary = tick_mod.tick(store, config, _notifier(config), client=client, dry_run=dry_run)
     console.print(summary)
+
+
+@app.command("init-config")
+def init_config_cmd(force: bool = typer.Option(False, "--force", help="Overwrite.")) -> None:
+    """Write ~/.autoclip/auto/config.yaml from docs/auto-config.example.yaml (fully automatic mode)."""
+    from .config import init_config
+
+    try:
+        target = init_config(force=force)
+    except FileExistsError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(1) from None
+    console.print(f"Wrote {target}")
 
 
 @app.command()
@@ -69,6 +94,7 @@ def bot() -> None:
     from . import runner
     from . import tick as tick_mod
 
+    secrets.harden_logging()
     config, store = load_config(), Store()
     notifier = _notifier(config)
 
@@ -89,12 +115,17 @@ def bot() -> None:
 
 
 @app.command("post-due")
-def post_due() -> None:
+def post_due(
+    dry_run: bool = typer.Option(False, "--dry-run", help="No upload; 'WOULD POST' pings only."),
+) -> None:
     """Run only the posting half (previews, scheduling, due posts, reminders)."""
     from . import tick as tick_mod
 
     config = load_config()
-    console.print(tick_mod.post_cycle(Store(), config, _notifier(config), _client(config)))
+    client = None if dry_run else _client(config)
+    console.print(
+        tick_mod.post_cycle(Store(), config, _notifier(config), client, dry_run=dry_run)
+    )
 
 
 @app.command()
@@ -136,19 +167,23 @@ def status() -> None:
 
     config = load_config()
     console.print(approval.status_text(Store(), config))
-    console.print(
-        {
-            "telegram_token": secrets.secret_is_set(secrets.TELEGRAM_BOT_TOKEN),
-            "telegram_chat": secrets.secret_is_set(secrets.TELEGRAM_CHAT_ID),
+    info = {
+        "mode": config.mode_text(),
+        "chat_backend": config.chat,
+        "telegram_token": secrets.secret_is_set(secrets.TELEGRAM_BOT_TOKEN),
+        "telegram_chat": secrets.secret_is_set(secrets.TELEGRAM_CHAT_ID),
+        "upload_post_key": secrets.secret_is_set(secrets.UPLOAD_POST_API_KEY),
+        "twitch": secrets.secret_is_set(secrets.TWITCH_CLIENT_ID),
+        "level2_active": config.level2_active,
+        "manual_platforms": config.upload_post.manual_platforms,
+    }
+    if config.chat == "discord":  # legacy backend, kept but not part of the default path
+        info |= {
             "discord_token": secrets.secret_is_set(secrets.DISCORD_BOT_TOKEN),
             "discord_channel": secrets.secret_is_set(secrets.DISCORD_CHANNEL_ID),
             "discord_owner": secrets.secret_is_set(secrets.DISCORD_OWNER_ID),
-            "chat_backend": config.chat,
-            "upload_post_key": secrets.secret_is_set(secrets.UPLOAD_POST_API_KEY),
-            "twitch": secrets.secret_is_set(secrets.TWITCH_CLIENT_ID),
-            "level2_active": config.level2_active,
         }
-    )
+    console.print(info)
 
 
 @app.command("report-removal")

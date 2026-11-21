@@ -42,11 +42,15 @@ def handle_button(
 ) -> tuple[str, str | None]:
     """Pure button logic: returns (reply text, follow-up) with follow-up 'edit:<clip_id>' for a modal."""
     kind, _, raw = custom_id.partition(":")
+    raw, _, token = raw.partition(":")
     if not raw.isdigit():
         return "Unknown button.", None
     target = int(raw)
     if kind == "a":
-        return approval.approve(store, target, int(owner_id), config, source="discord"), None
+        text = approval.approve(
+            store, target, int(owner_id), config, source="discord", token=token or None
+        )
+        return text, None
     if kind == "r":
         return approval.reject(store, target, int(owner_id), source="discord"), None
     if kind == "e":
@@ -156,6 +160,7 @@ def build_client(
     @tasks.loop(seconds=60)
     async def cycle() -> None:
         try:
+            await asyncio.to_thread(approval.restore_stale_edits, store)
             await asyncio.to_thread(approval.send_pending_previews, store, notifier, config)
             for job in extra_jobs or []:
                 await asyncio.to_thread(job, store)
