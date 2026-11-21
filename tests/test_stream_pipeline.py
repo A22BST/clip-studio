@@ -13,6 +13,58 @@ from autoclip.stream import hype_eval
 from autoclip.stream.ingest import StreamSource
 
 
+@pytest.mark.parametrize("source_location", ["same", "external", "edit"])
+@pytest.mark.parametrize("destination_exists", [False, True])
+def test_stream_cli_highlights_copy(monkeypatch, tmp_path, source_location, destination_exists):
+    from typer.testing import CliRunner
+
+    from autoclip import config, db
+    from autoclip.stream import campaigns, cli, ingest
+
+    work = tmp_path / "work" / "job"
+    work.mkdir(parents=True)
+    destination = work / "highlights.json"
+    if destination_exists:
+        destination.write_text('{"clips": []}', encoding="utf-8")
+    source = {
+        "same": destination,
+        "external": tmp_path / "highlights.json",
+        "edit": work / "highlights_edit_1.json",
+    }[source_location]
+    payload = {"clips": [{"start_word_index": 0, "end_word_index": 9, "title": "picked"}]}
+    content = json.dumps(payload)
+    source.write_text(content, encoding="utf-8")
+    prepared = SimpleNamespace(
+        job=SimpleNamespace(id="job"),
+        candidates_path=work / "candidates.json",
+        highlights_path=destination,
+    )
+    stream = SimpleNamespace(
+        streamer="test", vod_id="local", duration_s=30, chat_path=None,
+    )
+    monkeypatch.setattr(db, "init", lambda: None)
+    monkeypatch.setattr(config, "load", lambda: SimpleNamespace())
+    monkeypatch.setattr(campaigns, "load_campaign", lambda _name: Campaign(name="c"))
+    monkeypatch.setattr(ingest, "ingest_local", lambda *a, **kw: stream)
+    monkeypatch.setattr(pipeline, "prepare", lambda *a, **kw: prepared)
+    rendered = []
+
+    def render(prepared, *_args, **_kwargs):
+        rendered.append(pipeline.load_highlights(prepared.highlights_path))
+        return []
+
+    monkeypatch.setattr(pipeline, "render", render)
+    result = CliRunner().invoke(cli.app, [
+        "stream", str(tmp_path / "vod.mp4"), "--campaign", "c", "--highlights", str(source),
+    ])
+
+    assert result.exit_code == 0, result.exception
+    assert len(rendered) == 1
+    assert rendered[0][0][0].title == "picked"
+    assert destination.read_text(encoding="utf-8") == content
+    assert source.read_text(encoding="utf-8") == content
+
+
 @pytest.fixture
 def viewer_clip_prepare(monkeypatch, tmp_path):
     from autoclip.config import Settings

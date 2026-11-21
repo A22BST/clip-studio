@@ -104,7 +104,12 @@ def stream_cmd(
     console.print(f"[green]Candidates:[/green] {prepared.candidates_path}")
     if highlights_file is not None:
         prepared.highlights_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(highlights_file, prepared.highlights_path)
+        # Auto selection already writes highlights.json into this job's workspace.
+        if not (
+            prepared.highlights_path.exists()
+            and highlights_file.samefile(prepared.highlights_path)
+        ):
+            shutil.copyfile(highlights_file, prepared.highlights_path)
     if prepare_only or not prepared.highlights_path.exists():
         console.print(
             "\n[yellow]Waiting for clip selection.[/yellow] In Claude Code run "
