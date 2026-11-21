@@ -52,3 +52,6 @@ desktop.ini
 # Campaign overlays are the streamers' assets: keep them local, never in this public repo
 campaigns/assets/*
 !campaigns/assets/placeholder-logo.png
+
+# Finished clips waiting to be posted by hand
+to-post/
