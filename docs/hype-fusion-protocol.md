@@ -126,7 +126,41 @@ Verdict slices by the rule: **0-3 h and 3-6 h**. Sanity slice: 2:00-5:00 (alread
 Note for the reader: Day 2's clips are weak everywhere (only block 0-3 has more than one clip with
 >=50 views), so the >=50-view variant is usable on block 0-3 only.
 
-## 9. Results
+## 9. Stop rule and clippable-fraction metric (added 2026-11-21 on Ahmad's instruction, before any scoring)
+
+Ahmad capped the experiment to **this one round**. Nothing has been scored against viewer clips at
+the time of this addendum; the rankings for the 0-3 h slice and the 2:00-5:00 sanity slice are
+already saved (`ranking.json`), the 3-6 h ranking is made after this commit and before scoring.
+
+**Stop rule.** If fused-Claude's pooled hit rate on the two verdict slices is below 50% on strict
+or on overlap, or not above the pooled random 95th percentile, the experiment STOPS: report the
+numbers, state the verdict, do not tune any detector, prompt or window budget, and do not start a
+second round. (A pooled result of 50-60% is reported as "not reached", also without tuning.)
+
+**Clippable fraction (secondary metric, reported for every arm, whatever the hit rate).** The share
+of an arm's 15 windows per slice that are a *clippable moment*: self-contained and worth posting as
+a short clip. It uses no viewer data at all. Method:
+
+1. For each verdict slice and the sanity slice, take the 15 windows of chat-only, audio-only,
+   transcript-only, fused-Claude and fused-RRF. Identical or heavily overlapping windows (>=50% overlap
+   of the shorter one) are judged once. Items are shuffled with a fixed seed and shown WITHOUT the
+   arm, signals, scores or viewer data: only the slice time, a chat sample (<= 4 lines) and the
+   transcript text of the window (<= 1500 characters).
+2. Judges: (a) the Claude Sonnet 5.5 session that ranked (judges the verdict slices only; NOT blind
+   in the strict sense, because the same session chose the fused windows; disclosed); (b) an independent
+   Codex judge (gpt-6.1-sol, medium) that never saw the ranking prompt or any outputs, all slices.
+3. Frozen rubric, verbatim: *"Answer 1 (clippable) or 0. Clippable means: somewhere inside the window a
+   viewer could cut a 20-60 second clip that (a) has a clear beat, i.e. a setup and a payoff such as a
+   joke, a fail, a shock, a reveal, a big reaction or a tense escape; (b) makes sense to someone who has
+   not watched the stream; (c) is not mainly chat reading, donation/sponsor talk, menu or loading
+   time, idle planning, or the streamer talking over unrelated game audio. Borderline = 0."*
+4. Reported per arm and slice: clippable windows / 15 from each judge, plus the share of windows both
+   judges accept. Windows with no judgement count as 0.
+
+The clippable fraction does not change the hit-rate verdict; it exists because viewer clips are a weak
+and incomplete target on Day 2.
+
+## 10. Results
 
 (appended after scoring)
 
