@@ -185,6 +185,127 @@ def cmd_candidates(args: argparse.Namespace) -> None:
     print(out.name, {k: len(v) for k, v in peaks.items()}, "pooled", len(cands))
 
 
+def _arm_windows(out: Path) -> dict[str, list[tuple[float, float]]]:
+    peaks = {
+        k: [_P(d) for d in v]
+        for k, v in json.loads((out / "peaks.json").read_text("utf-8")).items()
+    }
+    cands = {c["id"]: c for c in json.loads((out / "candidates.json").read_text("utf-8"))}
+    chosen = json.loads((out / "ranking.json").read_text("utf-8"))["ids"][:ARM_N]
+    rrf = sorted(cands.values(), key=lambda c: (-c["rrf"], c["t"]))[:ARM_N]
+    arms = {n: [(p.window_start, p.window_end) for p in peaks[n][:ARM_N]] for n in peaks}
+    arms["fused_claude"] = [(cands[i]["start"], cands[i]["end"]) for i in chosen]
+    arms["fused_rrf"] = [(c["start"], c["end"]) for c in rrf]
+    return arms
+
+
+def cmd_judging(args: argparse.Namespace) -> None:
+    """Build blind judging items (no arm, no scores, no viewer data) and a private key."""
+    import random
+
+    out = slice_dir(args.vod, args.start_h, args.end_h)
+    transcript = Transcript.load(out / "transcript.json")
+    chat = ChatLog.load(out / "chat.json")
+    messages = sorted(chat.messages, key=lambda m: m.t)
+    items: list[tuple[float, float]] = []
+    key: dict[str, list[str]] = {}
+    for arm, windows in _arm_windows(out).items():
+        for a, b in windows:
+            hit = next(
+                (
+                    i
+                    for i, (x, y) in enumerate(items)
+                    if min(b, y) - max(a, x) >= 0.5 * min(b - a, y - x)
+                ),
+                None,
+            )
+            if hit is None:
+                items.append((a, b))
+                hit = len(items) - 1
+            key.setdefault(str(hit), []).append(arm)
+    order = list(range(len(items)))
+    random.Random(20261121).shuffle(order)
+    public = []
+    for n, i in enumerate(order, start=1):
+        a, b = items[i]
+        sample = [f"{m.user}: {m.text}" for m in messages if a <= m.t <= b][:4]
+        public.append(
+            {
+                "item": n,
+                "slice_time": f"{_hms(a)}-{_hms(b)}",
+                "chat": sample,
+                "transcript": fusion.window_text(transcript, a, b, max_chars=1500),
+                "_i": i,
+            }
+        )
+    (out / "judge_key.json").write_text(
+        json.dumps({str(it["item"]): key[str(it["_i"])] for it in public}), encoding="utf-8"
+    )
+    for it in public:
+        it.pop("_i")
+    (out / "judge_items.json").write_text(json.dumps(public, indent=1), encoding="utf-8")
+    print(out.name, len(public), "items")
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    """Pooled hit rates (+Wilson, +pooled random baseline) and clippable fractions."""
+    clips = load_clips(args.vod)
+    arms_order = ["chat", "audio", "transcript", "fused_claude", "fused_rrf"]
+    pooled = {a: {"strict": 0, "overlap": 0, "n": 0} for a in arms_order}
+    rand = {(a, m): None for a in arms_order for m in ("strict", "overlap")}
+    lines = []
+    for a_h, b_h in args.slice_pairs:
+        out = slice_dir(args.vod, a_h, b_h)
+        dur = (b_h - a_h) * 3600.0
+        truth = fusion.select_truth(clips, offset_s=a_h * 3600, duration_s=dur)
+        arms = _arm_windows(out)
+        key = json.loads((out / "judge_key.json").read_text("utf-8"))
+        judges = {}
+        for j in ("claude", "codex"):
+            f = out / f"judge_{j}.json"
+            judges[j] = json.loads(f.read_text("utf-8")) if f.exists() else None
+        for arm in arms_order:
+            windows = arms[arm]
+            for mode, overlap in (("strict", False), ("overlap", True)):
+                h = fusion.hits(truth, windows, overlap=overlap)
+                pooled[arm][mode] += h
+                counts = fusion.random_hit_counts(
+                    truth, [e - s for s, e in windows], dur, overlap=overlap
+                )
+                prev = rand[(arm, mode)]
+                rand[(arm, mode)] = (
+                    counts if prev is None else [x + y for x, y in zip(prev, counts, strict=True)]
+                )
+            pooled[arm]["n"] += len(truth)
+            items = [i for i, a in key.items() if arm in a]
+            cl = {}
+            for j, data in judges.items():
+                cl[j] = sum(int(data[i]) for i in items) if data else None
+            both = (
+                sum(int(judges["claude"][i] and judges["codex"][i]) for i in items)
+                if all(judges.values())
+                else None
+            )
+            lines.append((f"{a_h:g}-{b_h:g}", arm, len(items), cl, both))
+    print("POOLED (verdict slices)")
+    for arm in arms_order:
+        n = pooled[arm]["n"]
+        row = [arm]
+        for mode in ("strict", "overlap"):
+            h = pooled[arm][mode]
+            lo, hi = fusion.wilson(h, n)
+            counts = rand[(arm, mode)]
+            mean = sum(counts) / len(counts) / n
+            p95 = fusion.percentile95([c / n for c in counts])
+            row.append(
+                f"{mode} {h}/{n}={h / n:.0%} CI[{lo:.0%},{hi:.0%}] rand {mean:.0%}/p95 {p95:.0%}"
+            )
+        print("  ".join(row))
+    print("CLIPPABLE (distinct judged items per arm; 1s)")
+    for sl, arm, n_items, cl, both in lines:
+        print(sl, arm, "items", n_items, cl, "both", both)
+
+
 def _hms(s: float) -> str:
     s = int(s)
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
@@ -259,17 +380,26 @@ def main() -> None:
     s.add_argument("--audio", required=True)
     s.add_argument("--transcript", required=True)
     s.add_argument("--chat", required=True)
+    s = sub.add_parser("judging")
+    s.add_argument("vod")
+    s.add_argument("start_h", type=float)
+    s.add_argument("end_h", type=float)
+    s = sub.add_parser("report")
+    s.add_argument("vod")
+    s.add_argument("slices", nargs="+")
     s = sub.add_parser("score")
     s.add_argument("vod")
     s.add_argument("slices", nargs="+", help="e.g. 2-5 0-3")
     args = ap.parse_args()
-    if args.cmd == "score":
+    if args.cmd in ("score", "report"):
         args.slice_pairs = [tuple(float(x) for x in s.split("-")) for s in args.slices]
     {
         "slices": cmd_slices,
         "prep": cmd_prep,
         "adopt": adopt,
         "candidates": cmd_candidates,
+        "judging": cmd_judging,
+        "report": cmd_report,
         "score": cmd_score,
     }[args.cmd](args)
 

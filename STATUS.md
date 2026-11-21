@@ -152,3 +152,14 @@ One-way Telegram ping is ON whenever `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
 submit to Content Rewards now (30 min)", campaign, deadline, URL on its own line; reminders at +10 and +20 min until submitted; throttle, pause and
 removal notices. Telegram commands (`/pause /resume /status /submitted <url>`, only from `TELEGRAM_CHAT_ID`) work when the Telegram bot runs, i.e. with
 `chat: telegram`; in Discord mode the Telegram side is send-only and `/submitted` is done with the Submitted button or by the Discord bot.
+
+## Hype fusion experiment (2026-11-21, one capped round): 60% NOT reached
+Protocol `docs/hype-fusion-protocol.md` (pre-registered, committed before scoring; stop rule added on Ahmad's instruction).
+Day 2 VOD 2933758895, verdict slices 0-3 h and 3-6 h (chosen by clip totals after freezing), sanity slice 2:00-5:00.
+Pooled top-10 viewer-clip hit rate (20 clips, strict = overlap): fused-Claude **45%** (CI 26-66), fused-RRF 40%, chat-only 35%,
+transcript-only 30-35%, audio-only 5%; random 23% mean, 45% p95. 0-3 h: fused 7/10, 3-6 h: 2/10. Stop rule triggered (<50%):
+no tuning, no second round. Fused did not clear the random 95th percentile. Even a perfect ranker over the pooled candidates
+would reach 65% (pool-all 13/20). Clippable fraction (blind judges, rubric in protocol): fused-Claude 20% (Claude judge) / 50%
+(Codex judge) vs chat 10/30%, audio 14/34%, transcript 7/30%: fused is highest on both, judges differ a lot in strictness.
+New code (opt-in, not wired into `clip stream`): `pipeline/audio_hype.py` (DSP, 4 s/hour of audio), `pipeline/transcript_hype.py`,
+`stream/fusion.py`, `scripts/hype_fusion_run.py`; tests included. Rankings, candidates and judge files: `~/.autoclip/fusion/`.

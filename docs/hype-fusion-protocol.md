@@ -160,8 +160,85 @@ a short clip. It uses no viewer data at all. Method:
 The clippable fraction does not change the hit-rate verdict; it exists because viewer clips are a weak
 and incomplete target on Day 2.
 
-## 10. Results
+## 10. Results (scored 2026-11-21; one round, nothing tuned after scoring)
 
-(appended after scoring)
+Viewer clips: the Day 2 list fetched 2026-11-20 (565 clips with a VOD offset), cached in `~/.autoclip/fusion/`.
+Top-10 most-viewed clips per slice (hit counts out of 10). `rand` = mean / 95th percentile of 1000
+random sets of the same window lengths. Cov = duration coverage of the arm's 15 windows.
 
-(appended after scoring)
+| Slice | Arm | Cov | Strict | Overlap | Random strict (mean / p95) |
+|---|---|---:|---:|---:|---|
+| 0-3 h (verdict) | chat-only | 16% | 5 | 5 | 22% / 40% |
+| | audio-only | 19% | 1 | 1 | 25% / 50% |
+| | transcript-only | 14% | 3 | 4 | 20% / 40% |
+| | **fused-Claude** | 17% | **7** | **7** | 23% / 50% |
+| | fused-RRF (no LLM) | 16% | 6 | 6 | 24% / 50% |
+| | pool-all (ceiling) | 51% | 8 | 9 | |
+| 3-6 h (verdict) | chat-only | 13% | 2 | 2 | 19% / 40% |
+| | audio-only | 18% | 0 | 0 | 25% / 50% |
+| | transcript-only | 12% | 3 | 3 | 19% / 40% |
+| | **fused-Claude** | 17% | **2** | **2** | 23% / 50% |
+| | fused-RRF | 17% | 2 | 2 | 23% / 50% |
+| | pool-all (ceiling) | 48% | 5 | 5 | |
+| 2:00-5:00 (sanity, weak clips, overlaps both) | chat-only | 15% | 3 | 3 | 22% / 50% |
+| | audio-only | 18% | 1 | 1 | 26% / 50% |
+| | transcript-only | 14% | 6 | 6 | 21% / 40% |
+| | fused-Claude | 17% | 4 | 4 | 24% / 50% |
+| | fused-RRF | 17% | 5 | 5 | 24% / 50% |
+
+**Pooled over the two verdict slices (20 clips, Wilson 95% interval):**
+
+| Arm | Strict | Overlap | Pooled random strict (mean / p95) |
+|---|---|---|---|
+| chat-only | 7/20 = 35% [18, 57] | 7/20 = 35% | 21% / 40% |
+| audio-only | 1/20 = 5% [1, 24] | 1/20 = 5% | 25% / 45% |
+| transcript-only | 6/20 = 30% [15, 52] | 7/20 = 35% | 20% / 40% |
+| **fused-Claude** | **9/20 = 45% [26, 66]** | **9/20 = 45% [26, 66]** | 23% / 45% |
+| fused-RRF | 8/20 = 40% [22, 61] | 8/20 = 40% | 23% / 45% |
+
+Variant with only clips of >=50 views: usable on 0-3 h only (n = 6): fused-Claude 5/6, chat 3/6,
+transcript 2/6, audio 1/6; 3-6 h and 2:00-5:00 have n = 1 (not interpretable).
+
+**Verdict: 60% was NOT reached.** Fused-Claude is 45% strict and 45% overlap on the verdict slices
+(needs 60% on both), equal to the pooled random 95th percentile (45%), not above it. Under the stop rule
+(section 9) the experiment stops here: no tuning, no second round. Fused is better than every single source on
+the pooled count (45% vs chat 35%, transcript 30-35%, audio 5%), but the gain is 2 clips out of 20 and
+well inside the interval. The fused result is carried by one slice (0-3 h: 7/10; 3-6 h: 2/10).
+The ceiling is also informative: even a perfect ranker over the pooled candidates (pool-all, ~50% of the slice
+covered) would reach only 13/20 = 65%.
+
+**Clippable fraction** (rubric in section 9; windows of an arm judged clippable / distinct windows judged, ~15 per
+slice; verdict slices pooled, 28-30 windows per arm). The Claude judge is a fresh Claude Sonnet 5.5 subagent that never
+saw the rankings, scores or viewer clips (a deviation from section 9 that makes it MORE blind than planned,
+since the ranking session itself did not judge); the second judge is Codex gpt-6.1-sol, medium. The Codex
+judge's first run could not write its outputs (sandbox), so it was re-run on copies of the same item files placed in
+the repo workspace (deleted afterwards); it saw nothing else.
+
+| Arm | Claude judge | Codex judge |
+|---|---:|---:|
+| chat-only | 3 / 30 = 10% | 9 / 30 = 30% |
+| audio-only | 4 / 29 = 14% | 10 / 29 = 34% |
+| transcript-only | 2 / 30 = 7% | 9 / 30 = 30% |
+| **fused-Claude** | **6 / 30 = 20%** | **15 / 30 = 50%** |
+| fused-RRF | 4 / 28 = 14% | 9 / 28 = 32% |
+
+Sanity slice (2:00-5:00): Claude judge chat 3, audio 1, transcript 3, fused-Claude 3, fused-RRF 5 (of 14-15);
+Codex judge 8, 3, 6, 8, 7.
+Both judges rank fused-Claude highest on the verdict slices, but the judges differ a lot in strictness
+(Claude judge 7-20%, Codex judge 30-50%), the item counts are small, and the same counts for fused-Claude are
+not independent of the ranker (it chose windows with a transcript it found clip-worthy, and the judges read
+the same text). Treat it as a consistency check, not as proof of quality.
+
+## 11. What was not verified / limits
+
+- The ranker (a Claude session) also wrote the pipeline; its picks used transcript text and chat only. It
+  knew the slice-level clip totals used for selection (disclosed) and, for slices 3-6 and 2:00-5:00, the
+  windows overlap in hours 3:00-5:00 and the same moments were ranked twice (it remembered its earlier picks).
+- 20 clips is small: the interval of the verdict number is 26-66%.
+- Viewer clips on Day 2 are weak (565 clips, but only 7 of the 20 top-10 clips of 0-3 h and 3-6 h have 50 or more views).
+- The audio detector found game dialogue and cutscene shouting as often as streamer reactions (1/20); no
+  speaker separation was attempted (DSP only). The transcript detector relies on Whisper text without punctuation.
+- The fused path is NOT wired into `clip stream`; `fusion.py`, `audio_hype.py`, `transcript_hype.py`
+  and `scripts/hype_fusion_run.py` stay opt-in.
+- Reproduce: `python scripts/hype_fusion_run.py candidates|judging|score|report ...` (work folder
+  `~/.autoclip/fusion/`; rankings saved there as `ranking.json`; no credentials are stored in any of these files).

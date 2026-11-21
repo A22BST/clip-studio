@@ -164,6 +164,35 @@ def hits(
     return sum(hit for _, hit in details)
 
 
+def random_hit_counts(
+    truth: Sequence[hype_eval.ViewerClip],
+    lengths: Sequence[float],
+    duration_s: float,
+    *,
+    overlap: bool,
+    sets: int = 1000,
+    seed: int = 20261120,
+) -> list[int]:
+    """Hit counts of ``sets`` random window sets with the given lengths (deterministic)."""
+    if not truth or not lengths:
+        return [0] * sets
+    rng = random.Random(seed)
+    counts: list[int] = []
+    for _ in range(sets):
+        windows = []
+        for length in lengths:
+            length = min(length, duration_s)
+            a = rng.uniform(0.0, max(0.0, duration_s - length))
+            windows.append((a, a + length))
+        counts.append(hits(truth, windows, overlap=overlap))
+    return counts
+
+
+def percentile95(values: Sequence[float]) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1)] if ordered else 0.0
+
+
 def random_baseline(
     truth: Sequence[hype_eval.ViewerClip],
     lengths: Sequence[float],
@@ -176,14 +205,17 @@ def random_baseline(
     """Mean and 95th-percentile hit rate of random window sets with the given lengths."""
     if not truth or not lengths:
         return 0.0, 0.0
-    rng = random.Random(seed)
-    rates: list[float] = []
-    for _ in range(sets):
-        windows = []
-        for length in lengths:
-            length = min(length, duration_s)
-            a = rng.uniform(0.0, max(0.0, duration_s - length))
-            windows.append((a, a + length))
-        rates.append(hits(truth, windows, overlap=overlap) / len(truth))
-    rates.sort()
-    return sum(rates) / len(rates), rates[min(len(rates) - 1, math.ceil(0.95 * len(rates)) - 1)]
+    counts = random_hit_counts(truth, lengths, duration_s, overlap=overlap, sets=sets, seed=seed)
+    rates = [c / len(truth) for c in counts]
+    return sum(rates) / len(rates), percentile95(rates)
+
+
+def wilson(hits_: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval for a proportion."""
+    if n == 0:
+        return 0.0, 0.0
+    p = hits_ / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
