@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 
@@ -392,6 +393,11 @@ def config_set_secret(
         ...,
         help="Provider name (anthropic, openai, gemini) or 'huggingface_token'.",
     ),
+    clipboard: bool = typer.Option(
+        False,
+        "--clipboard",
+        help="Take the value from the clipboard (Windows) and clear the clipboard afterwards.",
+    ),
 ) -> None:
     """Store an API key or token. The value is prompted for, never passed as an argument.
 
@@ -403,7 +409,25 @@ def config_set_secret(
         console.print(f"[red]Unknown secret '{key}'.[/red] Expected one of: {', '.join(valid)}")
         raise typer.Exit(2)
 
-    value = typer.prompt(f"Value for {key}", hide_input=True).strip()
+    if clipboard:
+        import subprocess
+
+        try:
+            value = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+                capture_output=True, text=True, timeout=15, check=True,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            console.print("[red]Could not read the clipboard.[/red]")
+            raise typer.Exit(1) from None
+        if value:
+            with contextlib.suppress(Exception):
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value ' '"],
+                    timeout=15,
+                )
+    else:
+        value = typer.prompt(f"Value for {key}", hide_input=True).strip()
     if not value:
         console.print("[yellow]Empty value — nothing stored.[/yellow]")
         raise typer.Exit(1)

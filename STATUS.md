@@ -238,6 +238,7 @@ Plan decided by Ahmad in the CoWorkOS chat (free LLMs by default; Claude and Cod
   REQUIRES a key (the "no key" note was out of date); OpenRouter 50/day until $10 credit is bought.
 - Keys Ahmad adds (`autoclip config set-secret NAME`): `zai-glm-flash`, `nvidia-nim`, `openrouter-free`, `google-ai-studio`,
   `cloudflare-workers-ai` plus `cloudflare-account-id`, `groq`, `aihubmix`, `pollinations`. Start with Z.ai, OpenRouter, Google, NVIDIA.
+- Keys set 2026-11-21 (live one-call test OK): `openrouter-free`, `google-ai-studio`, `zai-glm-flash`, `nvidia-nim`. Not set: groq, cloudflare, aihubmix, pollinations. Live findings: NVIDIA `deepseek-ai/deepseek-v4-flash` (EOL 2026-08-07) and `moonshotai/kimi-k3` (EOL 2026-10-15) return 410, only `minimaxai/minimax-m3.1-flash` works: fix the preset. Some free models 429/503 transiently (OpenRouter gemma/ernie/ling, Google 3.8-flash, Z.ai 4.7-flash). `set-secret NAME --clipboard` added (reads clipboard, then clears it).
 - Next: add 2-3 keys, run `selection_compare.py` on a prepared job with `--claude`, then decide the selection default and order.
 - Known: `tests/auto/test_safe_posting.py::test_best_qa_goes_first_and_the_rest_wait_or_expire` fails on main too (clock-dependent, not touched).
 - 21 Nov (free-model chain build session): free-model chain built on branch `claude/free-model-chain-0660c4`, mocked tests only, selection default
