@@ -69,6 +69,7 @@ class ClipMeta:
     mentions: list[str] = field(default_factory=list)
     caption: str = ""
     hashtags: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -394,6 +395,7 @@ def build_clip_rows(
             score=candidate.score,
             reason=candidate.reason.strip(),
         )
+        meta.warnings = highlights.quality_warnings(clip.end_s - clip.start_s, clip.hook)
         rows.append((clip, meta))
 
     rows.sort(key=lambda pair: pair[0].score, reverse=True)
@@ -463,7 +465,7 @@ def render(
 
     for clip, meta in rows:
         say(f"Clip {clip.rank}/{len(rows)}: {clip.title}")
-        notes: list[str] = []
+        notes: list[str] = list(meta.warnings)
         words = transcript.slice(clip.start_word, clip.end_word)
         duration = clip.end_s - clip.start_s
 
@@ -600,8 +602,12 @@ def render(
             _audible_words(render_words, clip.start_s, muted)[:4],
             _audible_words(render_words, clip.start_s, muted)[-4:],
         )
+        dark_issue = cutqa.check_dark_opening(destination, plan)
+        if dark_issue:
+            edge_issues.append(dark_issue)
         for issue in edge_issues:
-            notes.append(f"cut-point {issue.severity} ({issue.edge}): {issue.message}")
+            label = issue.code or "cut-point"
+            notes.append(f"{label} {issue.severity} ({issue.edge}): {issue.message}")
             qa_score = max(0, qa_score - (25 if issue.severity == "error" else 5))
 
         store.create_export(

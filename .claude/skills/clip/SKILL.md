@@ -25,6 +25,15 @@ hot moments from chat; your job is to turn them into good, safe, on-brief clips.
 2. Choose `start_word_index` and `end_word_index` by copying the `[index]` numbers from the transcript (never
    compute indexes). Aim for `limits.min_duration_s`..`limits.max_duration_s` (about 20-60 s works best). Start on
    a sentence start where possible. The pipeline snaps to sentences/silence afterwards.
+   **Virality rules (from `docs/virality-plan.md`):**
+   - Target 20-35 s. Over 45 s only when the story needs it (the pipeline warns `long_clip`).
+   - The payoff (the peak line, reaction or event) should land in the first 60-70% of the clip, not the last
+     seconds. Trim dead lead-in; end 1-3 s after the payoff, not on housekeeping talk.
+   - First second must show or say something concrete: start on a complete sentence, or just before the event.
+     Avoid starting on swimming/menus/dark footage where the subject is not visible (`dark_opening` warning).
+   - Complete event: setup, action, authentic reaction. A stranger must understand the first 2 s.
+   - Prefer clips where the hook text matches what is spoken/seen in the first 2 s; the title promise must
+     be paid off inside the clip, ideally by second 15.
 3. Skip a candidate when: nothing actually happens, it is only chat spam, it needs context nobody has, or it is
    boring dead air. Quality over count: 5-10 clips total, best first. Never invent moments the transcript does not support.
 4. Overlapping candidates: keep the better one.
@@ -45,7 +54,7 @@ If the campaign's own notes carry a stricter spoiler rule, that rule wins (set t
 engine blocks it under `strict`).
 
 ## 3. Hook, title, caption, hashtags
-- `hook`: <= 8 words, shown for 2 s at the top, creates curiosity or states the payoff without spoilers
+- `hook`: <= 6 words (hard max 8), shown for 2 s at the top, one line where possible (two lines cover the face), creates curiosity or states the payoff without spoilers
   ("He did NOT expect this", "chat lost it at 0:12"). No clickbait that the clip does not deliver.
 - `title`: <= `max_title_chars`, specific, spoiler-free for reaction-to-spoiler clips.
 - `caption`: one line for the post; `hashtags`: ALWAYS include every `limits.required_hashtags` entry, plus

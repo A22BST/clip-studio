@@ -35,6 +35,23 @@ DEDUPE_IOU = 0.4
 HOSTED_CONCURRENCY = 3
 LOCAL_CONCURRENCY = 1
 
+LONG_CLIP_S = 45.0
+MAX_HOOK_WORDS = 6
+
+
+def quality_warnings(duration_s: float, hook: str) -> list[str]:
+    """Editorial warnings for validated highlights; never change campaign limits."""
+    notes: list[str] = []
+    if duration_s > LONG_CLIP_S:
+        notes.append(
+            f"long_clip warning: duration {duration_s:.1f}s > {LONG_CLIP_S:g}s "
+            "(target 20-35s)"
+        )
+    words = len(hook.split())
+    if words > MAX_HOOK_WORDS:
+        notes.append(f"hook_too_long warning: hook has {words} words > {MAX_HOOK_WORDS}")
+    return notes
+
 
 class HighlightError(RuntimeError):
     """Highlight detection produced nothing usable."""
