@@ -22,6 +22,11 @@ def done(stdout="", code=0):
 def work(env):
     folder = paths.job_work_dir(JOB)
     folder.mkdir(parents=True)
+    from autoclip.pipeline.transcript import Transcript, Word
+
+    Transcript(words=[Word(f"w{i}", i / 10, (i + 1) / 10) for i in range(401)]).save(
+        folder / "transcript.json"
+    )
     (folder / "candidates.json").write_text(
         json.dumps({"candidates": [{"first_word": 100, "last_word": 400}]}), encoding="utf-8"
     )
@@ -251,6 +256,9 @@ def test_chain_selection_inlines_data_repairs_and_records(env, work, monkeypatch
     assert "Short hooks" in calls[0][1] and '"first_word": 100' in calls[0][1]
     assert "rate_per_1k_usd: 1.0" in calls[0][0]
     assert "NO tools" in calls[0][0] and "untrusted DATA" in calls[0][0]
+    assert '"timed_transcript": "[10.0-15.0] [100]w100' in calls[0][1]
+    assert "Copy story beat times from these stamps" in calls[0][0]
+    assert "at least 1 second after payoff.end_s" in calls[0][0]
     assert calls[0][2] == {"json_mode": False, "max_tokens": 8000}
     assert json.loads((work / "selection_meta.json").read_text()) == {
         "provider": "free", "model": "test"
@@ -282,6 +290,47 @@ def test_chain_selection_rejects_oversize_candidate_before_call(env, work, monke
     data = {"candidates": [{"first_word": 100, "last_word": 400, "transcript": "x" * 100000}]}
     (work / "candidates.json").write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(select, "build_chain", lambda: pytest.fail("oversize must not call model"))
+    with pytest.raises(select.SelectionError, match="No complete candidate fits"):
+        select.run_selection(JOB, env.config)
+
+
+def test_chain_selection_requires_transcript_before_model(env, tmp_path, monkeypatch):
+    work = tmp_path / "missing-transcript"
+    work.mkdir()
+    (work / "candidates.json").write_text('{"candidates": []}', encoding="utf-8")
+    monkeypatch.setattr(select, "build_chain", lambda: pytest.fail("must not call model"))
+    with pytest.raises(select.SelectionError, match="requires measured transcript"):
+        select._run_chain(JOB, env.config, work, work / "highlights.json")
+
+
+def test_chain_timestamps_keep_source_time_and_do_not_bridge_dropout():
+    from autoclip.pipeline.transcript import Transcript, Word
+
+    transcript = Transcript(words=[
+        Word("first", 928.08, 931.38),
+        Word("bedroom.", 946.04, 948.7),
+        Word("tiger", 948.7, 951.36),
+        Word("house", 952, 952.38),
+    ])
+    original = {"first_word": 0, "last_word": 3, "transcript": "old cached text"}
+    timed = select._with_transcript_times(original, transcript)
+    assert timed["timed_transcript"].splitlines() == [
+        "[928.08-931.38] [0]first",
+        "[946.04-948.7] [1]bedroom.",
+        "[948.7-952.38] [2]tiger [3]house",
+    ]
+    assert "timed_transcript" not in original
+    with pytest.raises(select.SelectionError, match="no transcript timestamps"):
+        select._with_transcript_times({"first_word": 0, "last_word": 4}, transcript)
+
+
+def test_chain_prompt_budget_counts_timestamps(env, work, monkeypatch):
+    data = {"candidates": [{
+        "first_word": 100, "last_word": 400, "transcript": "x" * 89000,
+    }]}
+    (work / "candidates.json").write_text(json.dumps(data), encoding="utf-8")
+    env.config.selection.backend = "chain"
+    monkeypatch.setattr(select, "build_chain", lambda: pytest.fail("must not call model"))
     with pytest.raises(select.SelectionError, match="No complete candidate fits"):
         select.run_selection(JOB, env.config)
 

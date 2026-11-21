@@ -15,6 +15,7 @@ import yaml
 
 from .. import paths
 from ..pipeline.sfx import available_names
+from ..pipeline.transcript import Transcript
 from ..providers.base import ProviderError, extract_json_object
 from ..providers.chain import ChainResult, build_chain
 from . import claude_cli
@@ -162,11 +163,16 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
     # Keep candidate objects intact: dropping whole candidates avoids broken JSON
     # or truncated word tokens. Rules are never silently truncated.
     data = json.loads((work / "candidates.json").read_text(encoding="utf-8"))
+    try:
+        transcript = Transcript.load(work / "transcript.json")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise SelectionError("Chain selection requires measured transcript.json timestamps") from exc
     selected = []
     budget = 90000 - len(json.dumps({**data, "candidates": []}, ensure_ascii=False))
     if budget < 0:
         raise SelectionError("Candidate metadata exceeds the chain prompt budget")
     for candidate in data.get("candidates", []):
+        candidate = _with_transcript_times(candidate, transcript)
         size = len(json.dumps(candidate, ensure_ascii=False))
         if size <= budget:
             selected.append(candidate)
@@ -207,6 +213,15 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         + _skill_body()
         + "\nCampaign rules:\n" + rules
         + sfx_note
+        + "\nStory timing: each candidate's timed_transcript has measured "
+        "[start_s-end_s] lines with [word_index] tokens. Copy story beat times from "
+        "these stamps; never estimate from indexes, peak_t or window times. "
+        "Times use the transcript/source time base: do not add or subtract a job/slice offset. "
+        "Choose start_word_index at a stamped line's first word and end_word_index at "
+        "a stamped line's last word. Keep every beat inside those selected words' "
+        "timestamps (not merely inside the candidate window), in setup/change/payoff order. "
+        "Leave at least 1 second after payoff.end_s inside the selected word range. "
+        "Skip uncertain timing or insufficient usable footage; zero picks is valid.\n"
     )
     if len(system) > 50000:
         raise SelectionError("Skill and campaign rules exceed the chain prompt budget")
@@ -232,3 +247,34 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         raise error from exc
     _save_meta(work, result)
     return out
+
+
+def _with_transcript_times(candidate: dict, transcript: Transcript) -> dict:
+    """Inline measured evidence even for candidates cached before story selection.
+
+    Keep short, sentence-sized lines (at most five seconds unless a single word
+    is longer). Every stamp is copied from ASR, never interpolated across gaps.
+    Include this enrichment in the existing whole-candidate prompt budget.
+    """
+    first, last = candidate["first_word"], candidate["last_word"]
+    if not 0 <= first <= last < len(transcript.words):
+        raise SelectionError(f"Candidate word range {first}-{last} has no transcript timestamps")
+    lines = []
+    line_start = first
+
+    def append_line(end: int) -> None:
+        start_s, end_s = transcript.time_range(line_start, end)
+        text = " ".join(
+            f"[{i}]{transcript.words[i].text}" for i in range(line_start, end + 1)
+        )
+        lines.append(f"[{start_s}-{end_s}] {text}")
+
+    for i in range(first, last + 1):
+        word = transcript.words[i]
+        if i > line_start and word.end - transcript.words[line_start].start > 5.0:
+            append_line(i - 1)
+            line_start = i
+        if word.ends_sentence or i == last:
+            append_line(i)
+            line_start = i + 1
+    return {**candidate, "timed_transcript": "\n".join(lines)}

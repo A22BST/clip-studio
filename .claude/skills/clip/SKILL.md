@@ -91,6 +91,13 @@ engine blocks it under `strict`).
 Every pick in highlights.json MUST include `story.setup`, `story.change` and `story.payoff`, each with
 `start_s`, `end_s` (seconds in the ORIGINAL source video, read from `transcript.json` word timestamps,
 never estimated from word indexes) and non-empty `text`:
+- For chain selection, `timed_transcript` is inlined per candidate as measured
+  `[start_s-end_s] [wordIndex]word ...` lines. Copy beat times from these stamps;
+  never infer them from `peak_t`, window times or word counts. Select a range from
+  a stamped line's first word to a stamped line's last word so its timing is explicit.
+  Keep every beat inside the selected words' timestamps, with at least 1 s after
+  the payoff. Use the supplied time base unchanged; do not apply a job/slice offset.
+  If the timestamps or usable story are insufficient, skip the pick.
 - setup: the context a stranger needs. change: the action, surprise or reversal. payoff: the visible
   consequence, punchline or real reaction that delivers the hook's promise.
 ```json
