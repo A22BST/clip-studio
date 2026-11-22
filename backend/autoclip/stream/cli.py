@@ -31,7 +31,7 @@ def _root() -> None:
 
 @app.command("stream")
 def stream_cmd(
-    vod: str = typer.Argument(..., help="Twitch VOD link/id, or a path to a local video file."),
+    vod: str = typer.Argument(..., help="Twitch VOD link/id, YouTube URL, or local video file."),
     campaign: str = typer.Option(
         ..., "--campaign", "-c", help="Campaign name (campaigns/<name>.yaml)."
     ),
@@ -56,13 +56,14 @@ def stream_cmd(
     """
     from ..config import load as load_settings
     from ..db import init as db_init
+    from ..pipeline.ingest import is_youtube_url
     from . import ingest, pipeline
     from .campaigns import load_campaign
 
     local = Path(vod).exists()
     if local and (start or end):
         console.print(
-            "[red]--start/--end only trim Twitch downloads.[/red] A local file is used as it is: "
+            "[red]--start/--end only trim remote downloads.[/red] A local file is used as it is: "
             "trim it first (e.g. with ffmpeg) so the chat times still line up."
         )
         raise typer.Exit(2)
@@ -77,12 +78,17 @@ def stream_cmd(
     # -- ingest ------------------------------------------------------------
     try:
         with console.status("[cyan]Fetching VOD and chat...", spinner="dots"):
-            if ingest.twitch_vod_id(vod) and not local:
+            if is_youtube_url(vod) and not local:
+                stream = ingest.ingest_youtube_vod(vod, start=start or None, end=end or None)
+            elif ingest.twitch_vod_id(vod) and not local:
                 stream = ingest.ingest_twitch_vod(
                     vod, start=start or None, end=end or None, quality=quality
                 )
             else:
                 stream = ingest.ingest_local(Path(vod), chat_json=chat)
+    except ingest.StreamSkipped as exc:
+        console.print(f"Stream skipped: {exc}")
+        raise typer.Exit(0) from exc
     except ingest.StreamIngestError as exc:
         console.print(f"[red]Ingest failed.[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -94,12 +100,16 @@ def stream_cmd(
 
     # -- phase 1 -----------------------------------------------------------
     try:
+        pipeline.require_campaign_camera(stream, campaign)
         prepared = pipeline.prepare(
             stream,
             camp,
             settings=load_settings(),
             on_status=lambda msg: console.print(f"[cyan]>[/cyan] {msg}"),
         )
+    except pipeline.StreamSliceSkipped as exc:
+        console.print(f"Stream skipped: {exc}")
+        raise typer.Exit(0) from exc
     except pipeline.StreamPipelineError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc

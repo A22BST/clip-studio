@@ -19,6 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..stream.campaigns import Campaign, load_campaign
 
 
+class BackfillConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_slices_per_tick: int = Field(default=1, ge=0)
+    max_hours_per_day: float = Field(default=6, gt=0)
+
+
 class AutoMeta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -32,6 +38,7 @@ class AutoMeta(BaseModel):
     cap_per_clip_usd: float | None = Field(default=None, gt=0)
     submit_url: str = ""
     notes: str = ""
+    backfill: BackfillConfig = Field(default_factory=BackfillConfig)
 
 
 @dataclass

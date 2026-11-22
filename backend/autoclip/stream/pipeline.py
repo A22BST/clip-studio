@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -55,6 +56,39 @@ CONTEXT_MARGIN_S = 20.0
 
 class StreamPipelineError(RuntimeError):
     """The stream pipeline cannot continue (message is user-facing)."""
+
+
+class StreamSliceSkipped(StreamPipelineError):
+    """A campaign guard excludes the slice without retrying it."""
+
+
+def dylan_campaign(campaign: Campaign | str) -> bool:
+    name = campaign if isinstance(campaign, str) else campaign.name
+    return name in {"dylan-page-marathon", "Dylan Page GTA 6 Marathon"}
+
+
+def require_campaign_camera(stream: StreamSource, campaign: Campaign | str) -> None:
+    if dylan_campaign(campaign):
+        from ..pipeline.facecam import detect_facecam_geometry
+
+        if detect_facecam_geometry(stream.video, 0, stream.duration_s) is None:
+            raise StreamSliceSkipped("Dylan campaign requires a usable camera; no webcam/face detected.")
+
+
+def no_chat_peaks(audio_peaks, transcript, duration_s: float, limit: int):
+    """Pool audio and transcript evidence with equal rank weights, without chat."""
+    from ..pipeline.hype import HypePeak
+    from ..pipeline.transcript_hype import compute_transcript_hype
+    from .fusion import pool_candidates
+
+    pooled = pool_candidates({
+        "audio": audio_peaks,
+        "transcript": compute_transcript_hype(transcript, duration_s=duration_s, top_n=limit),
+    })
+    ranked = sorted(pooled, key=lambda p: (-p.rrf, p.t))[:limit]
+    return [HypePeak(p.t, p.rrf, p.start, p.end,
+                     [f"{name}: {reason}" for name, why in p.reasons.items() for reason in why],
+                     []) for p in ranked]
 
 
 @dataclass
@@ -217,7 +251,7 @@ def prepare(
         viewer_clips = []
         say("Skipping viewer clips: fetch failed")
 
-    say("Scoring chat hype" if chat else "No chat available: scoring audio loudness only")
+    say("Scoring chat hype" if chat else "No chat available: scoring audio loudness plus transcript hype")
     loudness = hype.loudness_series(audio)
     peaks = hype.compute_hype(
         chat or ChatLog(duration_s=source.duration_s),
@@ -226,7 +260,11 @@ def prepare(
         duration_s=source.duration_s,
         config=hype.HypeConfig(top_n=max_candidates),
     )
+    if not chat:
+        peaks = no_chat_peaks(peaks, transcript, source.duration_s, max_candidates)
     if not peaks:
+        if not chat:
+            raise StreamSliceSkipped("No reaction candidates in audio or transcript; slice completed without clips.")
         raise StreamPipelineError("No hype peaks found: chat and audio were flat everywhere.")
 
     candidates = []
@@ -532,13 +570,33 @@ def render(
 
         # -- layout ----------------------------------------------------------
         layout = layouts.Layout(meta.layout)
+        if dylan_campaign(campaign):
+            layout = layouts.Layout.FACECAM
         if meta.spoiler_level == "reaction-to-spoiler":
             # Rockstar-sensitive moment: the reaction is the clip. Force the REACTION layout.
             layout = layouts.Layout.REACTION
         plan = None
         if layout in (layouts.Layout.FACECAM, layouts.Layout.REACTION):
             camera = detect_facecam_geometry(source_path, clip.start_s, clip.end_s)
+            if camera is not None and dylan_campaign(campaign):
+                # A camera seen in the intro alone is insufficient. Require a usable
+                # camera throughout the cut, checking every five-second interval.
+                for offset in range(0, max(1, math.ceil(duration)), 5):
+                    lo = clip.start_s + offset
+                    if detect_facecam_geometry(source_path, lo, min(lo + 5, clip.end_s)) is None:
+                        camera = None
+                        break
             if camera is None:
+                if dylan_campaign(campaign):
+                    outcomes.append(ClipOutcome(
+                        rank=clip.rank, title=clip.title, hook=clip.hook,
+                        start_s=clip.start_s, end_s=clip.end_s,
+                        layout_requested=meta.layout, layout_used="-",
+                        spoiler_level=meta.spoiler_level, status="rejected",
+                        notes=["Dylan camera missing in clip; gameplay-only footage skipped"],
+                    ))
+                    store.update_clip(clip.id, status="discarded")
+                    continue
                 notes.append(f"no facecam found: {layout.value} layout fell back to track")
                 layout = layouts.Layout.TRACK
             else:
@@ -546,6 +604,8 @@ def render(
                 if meta.spoiler_level == "reaction-to-spoiler" and not blur:
                     notes.append("reaction-to-spoiler clip has no blur window (check the reveal)")
                 plan = layouts.default_plan(layout, camera.webcam, blur, face_crop=camera.face_crop)
+                if dylan_campaign(campaign):
+                    plan.cam_fraction = 0.75
 
         # -- rules -----------------------------------------------------------
         result = rules.check_clip(

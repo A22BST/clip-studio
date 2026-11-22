@@ -17,3 +17,7 @@ notes: >
   clip for whole-clip camera focus until that fallback is guarded.
   Default watcher waits until offline and ignores sources older than 48 hours;
   a 120-hour archive may need a larger watch.max_vod_age_hours before processing.
+
+backfill:
+  max_slices_per_tick: 1
+  max_hours_per_day: 14   # Ahmad 22 Nov: volume first; the campaign budget is draining

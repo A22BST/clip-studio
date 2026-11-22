@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,46 @@ from .notify import Notifier
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+
+def claim_tick_job(store: Store, backfill_run: int, now: datetime | None = None):
+    """Claim recent work first, reserving historical video hours atomically (UTC day)."""
+    from .campaign_meta import BackfillConfig, load_auto_campaign
+    from .store import now_iso
+
+    day = (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+    usage_key = f"backfill:hours:{day}"
+    with store._conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        rows = con.execute(
+            "SELECT jobs.*, EXISTS(SELECT 1 FROM meta WHERE key='backfill:job:' || jobs.id) "
+            "AS backfill_job FROM jobs WHERE state='queued' "
+            "ORDER BY backfill_job, vod_created_at DESC, id"
+        ).fetchall()
+        for row in rows:
+            job = dict(row)
+            if job.pop("backfill_job"):
+                try:
+                    limits = load_auto_campaign(job["campaign_key"]).meta.backfill
+                except (FileNotFoundError, ValueError):
+                    limits = BackfillConfig()
+                if backfill_run >= limits.max_slices_per_tick:
+                    continue
+                override = con.execute("SELECT value FROM meta WHERE key=?",
+                                       (f"backfill:daily_limit:{job['campaign_key']}",)).fetchone()
+                daily_limit = float(override[0]) if override else limits.max_hours_per_day
+                usage = con.execute("SELECT value FROM meta WHERE key=?", (usage_key,)).fetchone()
+                hours = float(usage[0]) if usage else 0
+                cost = (job["end_s"] - job["start_s"]) / 3600
+                if cost <= 0 or hours + cost > daily_limit + 1e-9:
+                    continue
+                con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                            (usage_key, str(hours + cost)))
+            con.execute("UPDATE jobs SET state='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                        (now_iso(), job["id"]))
+            job.update(state="running", attempts=job["attempts"] + 1)
+            return job
+    return None
 
 
 def _pid_alive(pid: int) -> bool:
@@ -138,12 +178,15 @@ def tick(
                 summary["new_jobs"] = len(scan(store, config, now=now))
             except Exception as exc:  # a Twitch outage must not stop posting
                 store.log_event("watch_error", f"{type(exc).__name__}: {str(exc)[:200]}")
+            backfill_run = 0
             for _ in range(max_jobs):
                 if store.is_paused() or not diskguard.disk_ok(config)[0]:
                     break
-                job = store.claim_next_job()
+                job = claim_tick_job(store, backfill_run, now)
                 if job is None:
                     break
+                if store.get_meta(f"backfill:job:{job['id']}"):
+                    backfill_run += 1
                 summary["clips"] += process(store, config, job)
                 try:
                     outbox.after_render(store, config, job, now=now, dry_run=dry_run)

@@ -7,3 +7,7 @@ budget_usd: 1840
 cap_per_clip_usd: 300
 submit_url: "https://contentrewards.com/c/campaigns/bbd3a963-9a23-457c-bc15-6697971d9902"
 notes: "Budget remaining as of 22 Nov 2026. GTA 6 playthrough from 19 Nov 2026."
+
+backfill:
+  max_slices_per_tick: 1
+  max_hours_per_day: 14   # Ahmad 22 Nov: volume first; the campaign budget is draining

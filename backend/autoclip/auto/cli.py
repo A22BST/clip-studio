@@ -13,6 +13,8 @@ from .store import Store
 
 app = typer.Typer(name="clip-auto", help="Clip Studio automation layer.", no_args_is_help=True)
 console = Console()
+if hasattr(console.file, "reconfigure"):
+    console.file.reconfigure(errors="replace")
 
 
 @app.callback()
@@ -304,6 +306,45 @@ def install_tasks(
     for plan in plans:
         console.print(f"{plan['name']}: {' '.join(plan['command'])}")
     console.print("[green]Created.[/green]" if apply else "Dry run only. Add --apply to create.")
+
+
+@app.command("backfill")
+def backfill_cmd(
+    campaign: str = typer.Option(..., "--campaign"),
+    since: str | None = typer.Option(None, "--since"),
+    max_slices: int | None = typer.Option(None, "--max-slices", min=1),
+    slice_hours: float = typer.Option(2.5, "--slice-hours", min=0.0003),
+    per_day_hours: float | None = typer.Option(None, "--per-day-hours", min=0.0003),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Queue GTA VOD slices since the campaign cutoff; never download media."""
+    import sqlite3
+    from datetime import date
+
+    import httpx
+
+    from .. import paths
+    from .campaign_meta import load_auto_campaign
+    from .watcher import backfill
+
+    existing = None
+    try:
+        if dry_run:
+            # Read the queue without creating or migrating any persistent state.
+            db = paths.root() / "auto" / "auto.db"
+            existing = []
+            if db.is_file():
+                with sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True) as con:
+                    con.row_factory = sqlite3.Row
+                    existing = [dict(row) for row in con.execute("SELECT * FROM jobs")]
+        backfill(None if dry_run else Store(),
+                 load_config(paths.root() / "auto" / "config.yaml"), load_auto_campaign(campaign),
+                 since=date.fromisoformat(since) if since else None, max_slices=max_slices,
+                 slice_hours=slice_hours, per_day_hours=per_day_hours, dry_run=dry_run,
+                 existing_jobs=existing, emit=lambda s: console.print(s, markup=False, highlight=False, soft_wrap=True))
+    except (ValueError, FileNotFoundError, httpx.HTTPError):
+        console.print("Backfill metadata discovery failed or arguments/campaign are invalid; no media downloaded.")
+        raise typer.Exit(1) from None
 
 
 def main() -> None:  # pragma: no cover

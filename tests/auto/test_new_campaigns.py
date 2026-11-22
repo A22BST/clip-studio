@@ -12,7 +12,7 @@ EXPECTED = [
     (
         "dylan-page-marathon",
         "DylanPage",
-        ["@DylanPage"],
+        ["@dylan.page."],
         "youtube",
         4953,
         250,

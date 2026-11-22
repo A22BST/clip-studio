@@ -81,6 +81,10 @@ def process_job(
         work = paths.job_work_dir(autoclip_job) if autoclip_job else None
         if not (work and (work / "candidates.json").is_file()):
             done = _run(stream_command(job, ["--prepare-only"]), runner, 6 * 3600)
+            if done.returncode == 0 and "Stream skipped:" in (done.stdout or ""):
+                store.update_job(job_id, state="done", last_error="Stream skipped: live or no usable camera")
+                store.log_event("job_skipped", f"job {job_id}: live or no usable camera")
+                return 0
             match = JOB_ID_RE.search(done.stdout or "")
             if done.returncode != 0 or not match:
                 tail = ((done.stderr or "") + (done.stdout or ""))[-400:]
@@ -90,7 +94,13 @@ def process_job(
         highlights = select(autoclip_job, config)
         done = _run(stream_command(job, ["--highlights", str(highlights)]), runner, 3 * 3600)
         export_dir = paths.exports_dir() / autoclip_job
-        if done.returncode != 0 or not (export_dir / "report.json").is_file():
+        report_path = export_dir / "report.json"
+        # Rejected picks are a completed slice, even when rendering has no usable rows.
+        rejected = False
+        if report_path.is_file():
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            rejected = bool(report) and all(e.get("status") in {"blocked", "rejected"} for e in report)
+        if (done.returncode != 0 and not rejected) or not report_path.is_file():
             tail = ((done.stderr or "") + (done.stdout or ""))[-400:]
             raise JobError(f"render failed (exit {done.returncode}): {tail}")
         store.update_job(job_id, export_dir=str(export_dir))

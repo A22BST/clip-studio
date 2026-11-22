@@ -9,3 +9,7 @@ notes: >
   Budget remaining as of 22 Nov 2026. Instagram Reels only; owner account rules
   in campaign notes. Existing outbox INDEX uses global platform labels rather
   than campaign platforms: owner must post these clips only to Instagram Reels.
+
+backfill:
+  max_slices_per_tick: 1
+  max_hours_per_day: 14   # Ahmad 22 Nov: volume first; the campaign budget is draining

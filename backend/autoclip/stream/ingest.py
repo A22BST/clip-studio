@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -41,6 +42,66 @@ _TWITCH_VOD = re.compile(r"(?:twitch\.tv/(?:[^/]+/)?videos?/|^)(\d{6,})(?:[/?#]|
 
 class StreamIngestError(RuntimeError):
     """A stream could not be downloaded or stored."""
+
+
+class StreamSkipped(StreamIngestError):
+    """An ineligible stream should be marked done rather than retried."""
+
+
+def youtube_metadata(url: str) -> dict:
+    """Read metadata only, using the same proxy-free subprocess as downloads."""
+    return json.loads(_youtube_run(["--dump-single-json", "--skip-download", url]))
+
+
+def _youtube_run(args: list[str]) -> str:
+    env = {k: v for k, v in os.environ.items()
+           if k.upper() not in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}}
+    result = subprocess.run(
+        [sys.executable, "-m", "yt_dlp", "--no-warnings", "--no-progress", *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
+        check=False,
+    )
+    if result.returncode:
+        raise StreamIngestError("YouTube request failed; check yt-dlp availability and access.")
+    return result.stdout
+
+
+def ingest_youtube_vod(
+    url: str, *, start: str | float | None = None, end: str | float | None = None,
+    min_free_gb: float = 10.0,
+) -> StreamSource:
+    """Download only a bounded, finished YouTube VOD section, without chat."""
+    info = youtube_metadata(url)
+    if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
+        raise StreamSkipped("YouTube stream is still live or processing; taking finished streams only.")
+    lo, hi = parse_time(start), parse_time(end)
+    duration = float(info.get("duration") or 0)
+    hi = hi or duration
+    if not duration or not 0 <= lo < hi <= duration:
+        raise StreamIngestError("YouTube slice requires 0 <= start < end <= VOD duration.")
+    vod_id = str(info["id"])
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", vod_id):
+        raise StreamIngestError("Invalid YouTube video id.")
+    suffix = f"_{int(lo)}-{int(hi)}" if (start or end) else ""
+    folder = streams_dir() / f"{vod_id}{suffix}"
+    folder.mkdir(parents=True, exist_ok=True)
+    if disk_free_gb(folder) < min_free_gb:
+        raise StreamIngestError("Not enough free disk space for YouTube ingest.")
+    video = folder / "vod.mp4"
+    if not (video.exists() and video.stat().st_size):
+        _youtube_run([
+            "--no-playlist", "--download-sections", f"*{lo:g}-{hi:g}",
+            "--format", "bv*[height<=720]+ba/b[height<=720]",
+            "--merge-output-format", "mp4", "--remux-video", "mp4",
+            "--ffmpeg-location", ffmpeg.ffmpeg_path(),
+            "--output", str(folder / "vod.%(ext)s"), url,
+        ])
+    source = _finish(folder, video, None, vod_id=vod_id, url=url, trim_start_s=lo)
+    source.streamer = info.get("channel") or info.get("uploader") or ""
+    source.title = info.get("title") or ""
+    meta = {k: str(v) if isinstance(v, Path) else v for k, v in asdict(source).items()}
+    (folder / "stream.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return source
 
 
 @dataclass

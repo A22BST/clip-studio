@@ -6,9 +6,10 @@ import logging
 import math
 import re
 import time
+import unicodedata
 from collections.abc import Iterable
 from contextlib import nullcontext
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -22,6 +23,12 @@ from .store import Store, parse_iso
 log = logging.getLogger(__name__)
 _tokens: dict[str, tuple[str, float]] = {}
 _HELIX = "https://api.twitch.tv/helix"
+
+
+def _plain_title(title: str) -> str:
+    """Keep metadata output free of pictographs, including on legacy consoles."""
+    return "".join(c for c in title if unicodedata.category(c) not in {"So", "Cs"}
+                   and c not in {"\u200d", "\ufe0f", "\u20e3"})
 
 
 def parse_duration(value: str) -> int:
@@ -51,7 +58,7 @@ def _token(client: httpx.Client, client_id: str, refresh: bool = False) -> str:
     return token
 
 
-def _get(client: httpx.Client, endpoint: str, **params: str) -> list[dict[str, Any]]:
+def _get(client: httpx.Client, endpoint: str, *, paginate: bool = False, **params: str) -> list[dict[str, Any]]:
     client_id = secrets.get_secret(secrets.TWITCH_CLIENT_ID)
     if not client_id:
         raise ValueError("Missing Twitch credentials")
@@ -66,11 +73,16 @@ def _get(client: httpx.Client, endpoint: str, **params: str) -> list[dict[str, A
             _tokens.pop(client_id, None)
             continue
         response.raise_for_status()
-        return response.json()["data"]
+        data = response.json()
+        rows = data["data"]
+        cursor = (data.get("pagination") or {}).get("cursor")
+        if paginate and cursor:
+            rows += _get(client, endpoint, paginate=True, **{**params, "after": cursor})
+        return rows
     return []  # Both attempts either return data or raise.
 
 
-def _youtube_vods(streamer: str) -> list[dict[str, Any]]:
+def _youtube_vods(streamer: str, since: date | None = None) -> list[dict[str, Any]]:
     """Read the latest five streams from the exact configured YouTube handle."""
     import yt_dlp
 
@@ -86,7 +98,11 @@ def _youtube_vods(streamer: str) -> list[dict[str, Any]]:
         "socket_timeout": 15,
         "retries": 0,
         "extractor_retries": 0,
+        "proxy": "",
+        "lazy_playlist": True,
     }
+    if since:
+        options.pop("playlistend")
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             data = ydl.extract_info(f"https://www.youtube.com/{streamer}/streams", download=False)
@@ -98,18 +114,27 @@ def _youtube_vods(streamer: str) -> list[dict[str, Any]]:
     for entry in data.get("entries") or []:
         if not entry or entry.get("live_status") not in {"is_live", "was_live", "post_live"}:
             continue
-        timestamp = entry.get("release_timestamp") or entry.get("timestamp")
+        # Backfill filters VOD publication dates; a marathon may start before midnight
+        # and only become a published archive the next day. Watch keeps source time.
+        timestamp = (
+            entry.get("timestamp") or entry.get("release_timestamp")
+            if since else entry.get("release_timestamp") or entry.get("timestamp")
+        )
         duration = entry.get("duration")
-        if timestamp is None or duration is None or duration <= 0:
+        if timestamp is None:
+            continue
+        if since and datetime.fromtimestamp(timestamp, UTC).date() < since:
+            break
+        if (duration is None or duration <= 0) and entry.get("live_status") != "is_live":
             continue  # Never queue an unbounded live download or guess the source date.
         vods.append(
             {
                 "id": entry["id"],
                 "title": entry.get("title") or "",
                 "created_at": datetime.fromtimestamp(timestamp, UTC).isoformat(),
-                "duration": f"{int(duration)}s",
+                "duration": f"{int(duration or 0)}s",
                 "url": f"https://www.youtube.com/watch?v={entry['id']}",
-                "is_live": entry.get("live_status") == "is_live",
+                "is_live": entry.get("live_status") in {"is_live", "post_live"},
             }
         )
     return vods
@@ -181,7 +206,7 @@ def scan(
                             store.add_job(**fields, state="skipped")
                             continue
                         created = parse_iso(vod["created_at"])
-                        if not baseline and config.watch.wait_until_offline and vod.get("is_live"):
+                        if vod.get("is_live") and (platform == "youtube" or config.watch.wait_until_offline):
                             continue
                         if (
                             created
@@ -220,3 +245,120 @@ def scan(
     if scanned and not failed:
         store.set_meta("watch_baseline_done", "1")
     return queued
+
+
+def backfill_ranges(duration: int, size: int, known, platform: str, vod_id: str):
+    """Subtract existing footage before splitting, so changing slice sizes leaves no holes."""
+    cursor = 0
+    covered = sorted((int(j["start_s"]), int(j["end_s"] or duration)) for j in known
+                     if j["platform"] == platform and j["vod_id"] == vod_id
+                     and j["state"] != "skipped")
+    for lo, hi in [*covered, (duration, duration)]:
+        stop = min(duration, lo)
+        while cursor < stop:
+            end = min(cursor + size, stop)
+            yield cursor, end
+            cursor = end
+        cursor = max(cursor, min(duration, hi))
+
+
+def backfill(
+    store: Store | None, config: AutoConfig, campaign: AutoCampaign, *,
+    since: date | None = None, max_slices: int | None = None, slice_hours: float = 2.5,
+    per_day_hours: float | None = None, dry_run: bool = False,
+    client: httpx.Client | None = None, emit=print,
+    existing_jobs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """List and enqueue historical slices. Metadata only, including in non-dry runs.
+
+    Backfill settings live in the campaign sidecar's ``backfill`` section. CLI daily
+    overrides are persisted in store metadata; no source-age restriction applies here.
+    """
+    if not math.isfinite(slice_hours) or slice_hours <= 0:
+        raise ValueError("slice-hours must be positive and finite")
+    if max_slices is not None and max_slices < 1:
+        raise ValueError("max-slices must be positive")
+    if per_day_hours is not None and (not math.isfinite(per_day_hours) or per_day_hours <= 0):
+        raise ValueError("per-day-hours must be positive and finite")
+    since = since or campaign.meta.starts_at or date(2026, 11, 19)
+    if campaign.meta.starts_at:
+        since = max(since, campaign.meta.starts_at)
+    if campaign.meta.platform not in {"youtube", "twitch"}:
+        raise ValueError("Backfill supports Twitch and YouTube only")
+    live, reason = campaign.is_live()
+    if not live:
+        emit(f"Skipped campaign {campaign.key}: {reason}")
+        return []
+    if not dry_run and not disk_ok(config)[0]:
+        emit("Backfill paused: disk guard")
+        return []
+    vods = []
+    with nullcontext(client) if client is not None else httpx.Client(timeout=30, trust_env=False) as http:
+        for streamer in campaign.meta.streamers:
+            if campaign.meta.platform == "youtube":
+                entries = _youtube_vods(streamer, since=since)
+            else:
+                users = _get(http, "users", login=streamer)
+                if not users:
+                    emit(f"No Twitch user found for configured streamer {streamer}")
+                    continue
+                streams = _get(http, "streams", user_login=streamer)
+                live_ids = {s["id"] for s in streams}
+                entries = _get(http, "videos", user_id=users[0]["id"], type="archive",
+                               first="100", paginate=True)
+                entries = [{**v, "is_live": bool(v.get("stream_id") in live_ids)} for v in entries]
+            for vod in entries:
+                created = parse_iso(vod["created_at"])
+                if not created or created.date() < since:
+                    continue
+                if vod.get("is_live"):
+                    emit(f"Skipped live stream {vod['id']}: {_plain_title(vod['title'])}")
+                    continue
+                game = str(vod.get("game_name") or vod.get("game") or "")
+                chapters = vod.get("chapters") or []
+                gta = re.search(r"\bGTA\b|Grand\s+Theft\s+Auto", vod["title"], re.I)
+                gta = gta or game.casefold() == "grand theft auto vi" or any(
+                    str(c.get("game_name") or c.get("game") or c.get("title") or "").casefold()
+                    == "grand theft auto vi" for c in chapters if isinstance(c, dict)
+                )
+                if not gta and campaign.key != "dylan-page-marathon":
+                    continue
+                duration = parse_duration(vod["duration"])
+                if duration > 0:
+                    vods.append({**vod, "streamer": streamer, "duration_s": duration})
+    vods.sort(key=lambda v: parse_iso(v["created_at"]), reverse=True)
+    known = list(existing_jobs if existing_jobs is not None else store.list_jobs() if store else [])
+    plans = []
+    for vod in vods:
+        slices = []
+        size = max(1, int(slice_hours * 3600))
+        for start, end in backfill_ranges(vod["duration_s"], size, known,
+                                          campaign.meta.platform, vod["id"]):
+            if max_slices is not None and len(plans) >= max_slices:
+                break
+            fields = dict(campaign_key=campaign.key, platform=campaign.meta.platform,
+                          vod_id=vod["id"], streamer=vod["streamer"], title=vod["title"],
+                          vod_created_at=vod["created_at"], url=vod["url"], start_s=start, end_s=end)
+            plans.append(fields)
+            slices.append(f"{start}-{end}s")
+            known.append({**fields, "state": "queued"})
+            if not dry_run:
+                assert store is not None
+                # Insert and mark atomically so a tick cannot claim an unmarked slice.
+                from .store import now_iso
+                with store._conn() as con:
+                    cols = {**fields, "created_at": now_iso(), "updated_at": now_iso()}
+                    cur = con.execute(
+                        f"INSERT OR IGNORE INTO jobs({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",
+                        tuple(cols.values()),
+                    )
+                    if cur.rowcount:
+                        con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                                    (f"backfill:job:{cur.lastrowid}", "1"))
+        if slices:
+            emit(f"{vod['id']} | {_plain_title(vod['title'])} | {vod['created_at']} | {vod['duration_s']}s")
+            emit("  " + ("Would enqueue: " if dry_run else "Enqueued: ") + ", ".join(slices))
+    if not dry_run and store and per_day_hours is not None:
+        store.set_meta(f"backfill:daily_limit:{campaign.key}", str(per_day_hours))
+    emit(f"{'Would enqueue' if dry_run else 'Enqueued'} {len(plans)} slices for {campaign.key} since {since}.")
+    return plans
