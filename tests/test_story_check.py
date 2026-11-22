@@ -181,7 +181,7 @@ def test_refine_checks_raw_and_refined_and_restores_caption_words():
         max_duration_s=35,
         on_story_check=checks.append,
     )
-    assert [v.status for v in checks] == ["ok", "widen"]
+    assert [v.status for v in checks] == ["ok", "ok"]
     assert boundary is not None
     assert boundary.end_s == 33
     assert boundary.end_word == 32
@@ -205,26 +205,26 @@ def test_refine_rejects_raw_story_before_snapping():
     assert checks[0].status == "reject"
 
 
-def test_refine_rejects_when_alignment_cuts_payoff_tail_at_ceiling():
+def test_refine_trims_head_when_alignment_cuts_payoff_tail_at_ceiling():
     data = pick_data()
     data.update(start_word_index=5, end_word_index=34)
     # Raw 5..35 is valid; sentence snapping starts at 0 and the 30s
-    # ceiling then removes a payoff that cannot be restored by widening.
+    # ceiling requires trimming the head to preserve the payoff tail.
     data["story"]["setup"].update(start_s=5, end_s=7)
     checks = []
-    assert (
-        refine(
-            Transcript(words=words_until()),
-            5,
-            34,
-            pick=StoryPick.model_validate(data),
-            max_duration_s=30,
-            on_story_check=checks.append,
-        )
-        is None
+    boundary = refine(
+        Transcript(words=words_until()),
+        5,
+        34,
+        pick=StoryPick.model_validate(data),
+        max_duration_s=30,
+        on_story_check=checks.append,
     )
-    assert [v.status for v in checks] == ["ok", "reject"]
-    assert "payoff_outside_bounds" in checks[-1].reasons
+    assert boundary is not None
+    assert boundary.duration_s <= 30
+    assert boundary.start_s <= 4.5
+    assert boundary.end_s >= 33
+    assert [v.status for v in checks] == ["ok", "ok"]
 
 
 def test_quiet_gameplay_is_not_dead_footage():

@@ -92,7 +92,11 @@ def refine(
     end_word = max(start_word, min(end_word, last_index))
 
     # Import locally: highlights orchestrates this module too.
-    from .highlights import check_story
+    from .highlights import Story, check_story
+
+    story = getattr(pick, "story", None)
+    if story is not None:
+        story = Story.model_validate(story)
 
     def story_check(start: float, end: float) -> StoryVerdict | None:
         if pick is None:
@@ -111,7 +115,13 @@ def refine(
         return verdict
 
     raw_verdict = story_check(*transcript.time_range(start_word, end_word))
-    if raw_verdict is not None and raw_verdict.status == "reject":
+    # Tail-only failures are repairable below; missing story evidence and
+    # insufficient clean footage must still fail before snapping.
+    if (
+        raw_verdict is not None
+        and raw_verdict.status == "reject"
+        and raw_verdict.reasons != ("payoff_in_last_second",)
+    ):
         log.info("Rejected raw story: %s", ", ".join(raw_verdict.reasons))
         return None
 
@@ -129,8 +139,48 @@ def refine(
     start_s = align_start(start_s, silences or [])
     end_s = align_end(end_s, silences or [])
 
-    # Alignment can only ever widen the clip, so re-check the ceiling.
-    if end_s - start_s > max_duration_s:
+    if story is not None:
+        first_s, last_s = transcript.words[0].start, transcript.words[-1].end
+        latest_start = max(first_s, story.setup.start_s - 0.5)
+        start_s = max(first_s, min(start_s, latest_start))
+        end_s = min(end_s, last_s)
+        minimum_end = story.payoff.end_s + 1.0
+        if end_s < minimum_end:
+            # Search nearby natural cuts first; a distant sentence must not
+            # add unrelated footage or force the setup out of the clip.
+            latest_end = min(last_s, latest_start + max_duration_s)
+            candidates = [
+                word.end
+                for word in transcript.words
+                if word.ends_sentence
+                and minimum_end <= word.end <= min(minimum_end + 3.0, latest_end)
+            ]
+            for silence in silences or []:
+                earliest = silence.start + SILENCE_MARGIN_S
+                latest = silence.end - SILENCE_MARGIN_S
+                cut = max(minimum_end, earliest, min(silence.start + SILENCE_TAIL_S, latest))
+                if cut <= min(latest, minimum_end + 3.0, latest_end):
+                    candidates.append(cut)
+            if candidates:
+                end_s = min(candidates)
+            else:
+                # Keep the one-second floor even when the nearest word to
+                # the preferred hard cut would otherwise land before it.
+                word_ends = [
+                    word.end
+                    for word in transcript.words
+                    if minimum_end <= word.end <= latest_end
+                ]
+                if not word_ends:
+                    return None
+                end_s = min(word_ends, key=lambda end: abs(end - (story.payoff.end_s + 1.5)))
+
+        # Preserve the payoff when alignment/extension reaches the ceiling.
+        start_s = max(start_s, end_s - max_duration_s)
+        if start_s > latest_start:
+            return None
+    # Preserve the legacy ceiling behavior for picks without a story.
+    elif end_s - start_s > max_duration_s:
         end_s = start_s + max_duration_s
 
     verdict = story_check(max(0.0, start_s), end_s)
@@ -139,7 +189,8 @@ def refine(
         return None
     if verdict is not None and verdict.status == "widen":
         start_s, end_s = verdict.start_s, verdict.end_s
-        # Widened cuts must also carry the restored words into captions and blur ranges.
+    if story is not None or (verdict is not None and verdict.status == "widen"):
+        # Adjusted cuts must carry the restored words into captions and blur ranges.
         covered = [
             i
             for i, word in enumerate(transcript.words)

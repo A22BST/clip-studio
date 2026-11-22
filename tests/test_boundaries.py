@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from autoclip.pipeline import boundaries
+from autoclip.pipeline.highlights import StoryPick
 from autoclip.pipeline.prepare import Silence
 from autoclip.pipeline.transcript import Transcript, Word
 
@@ -170,3 +171,91 @@ class TestSilenceAlignment:
 
         assert result is not None
         assert result.duration_s <= 12.0
+
+
+def story_pick(start=5, payoff_end=29.8):
+    return StoryPick(
+        start_word_index=0,
+        end_word_index=30,
+        story={
+            "setup": {"start_s": start, "end_s": start + 2, "text": "A strange object"},
+            "change": {"start_s": 20, "end_s": 22, "text": "It moves"},
+            "payoff": {"start_s": 28, "end_s": payoff_end, "text": "He screams"},
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "cut_kind, expected_end", [("sentence", 33), ("silence", 31.28), ("word", 31)]
+)
+def test_story_restores_payoff_tail_and_caption_words(cut_kind, expected_end):
+    words = [Word(f"w{i}", i, i + 1) for i in range(50)]
+    words[29].text += "."
+    if cut_kind == "sentence":
+        words[32].text += "."
+    silences = [Silence(31, 32)] if cut_kind == "silence" else []
+    # The raw range has a valid tail, but sentence snapping ends at 30.
+    result = boundaries.refine(
+        Transcript(words=words), 0, 30, pick=story_pick(), silences=silences
+    )
+    assert result is not None
+    assert result.end_s == pytest.approx(expected_end)
+    assert result.end_s - 29.8 >= 1
+    covered = [i for i, w in enumerate(words) if w.start < result.end_s and w.end > result.start_s]
+    assert (result.start_word, result.end_word) == (covered[0], covered[-1])
+
+
+def test_story_raw_tail_only_failure_can_be_repaired():
+    words = [Word(f"w{i}" + ("." if i == 29 else ""), i, i + 1) for i in range(50)]
+    pick = story_pick()
+    pick.end_word_index = 29
+    result = boundaries.refine(Transcript(words=words), 0, 29, pick=pick)
+    assert result is not None
+    assert result.end_s - pick.story.payoff.end_s >= 1
+
+
+def test_story_cap_trims_head_and_keeps_setup_lead():
+    words = [Word(f"w{i}" + ("." if i in (29, 31) else ""), i, i + 1) for i in range(50)]
+    pick = story_pick()
+    pick.start_word_index = 5
+    result = boundaries.refine(
+        Transcript(words=words), 5, 30, pick=pick, max_duration_s=28
+    )
+    assert result is not None
+    assert result.start_s == 4
+    assert result.end_s == 32
+    assert result.duration_s == 28
+    assert result.start_s <= pick.story.setup.start_s - 0.5
+    assert result.start_word == 4
+
+
+def test_story_start_snap_preserves_setup_lead():
+    words = [Word(f"w{i}" + ("." if i in (9, 29, 31) else ""), i, i + 1) for i in range(50)]
+    pick = story_pick(start=9)
+    pick.start_word_index = 7
+    result = boundaries.refine(Transcript(words=words), 7, 30, pick=pick)
+    assert result is not None
+    assert result.start_s == 8.5
+    assert result.start_word == 8
+
+
+def test_story_tail_cannot_extend_past_transcript():
+    words = [Word(f"w{i}" + ("." if i == 29 else ""), i, i + 1) for i in range(30)]
+    pick = story_pick()
+    pick.end_word_index = 29
+    assert boundaries.refine(Transcript(words=words), 0, 29, pick=pick) is None
+
+
+def test_story_rejects_when_cap_cannot_preserve_setup_and_payoff_tail():
+    words = [Word(f"w{i}" + ("." if i == 29 else ""), i, i + 1) for i in range(50)]
+    pick = story_pick(start=0)
+    pick.end_word_index = 29
+    assert boundaries.refine(
+        Transcript(words=words), 0, 29, pick=pick, max_duration_s=30
+    ) is None
+
+
+@pytest.mark.parametrize("legacy_pick", [None, StoryPick(start_word_index=10, end_word_index=69)])
+def test_no_story_preserves_existing_bounds(transcript, legacy_pick):
+    result = boundaries.refine(transcript, 10, 69, pick=legacy_pick)
+    assert result == boundaries.Boundary(start_s=4.75, end_s=35.25, start_word=10, end_word=69)
