@@ -12,7 +12,7 @@ required_caption_phrases: ["Watch KreekCraft on YouTube and Twitch"]
 # reference materials) at campaigns/assets/kreekcraft-logo.png. Until it exists every
 # clip is BLOCKED by the rules check - that is intentional.
 required_overlay: placeholder-logo.png
-disclosure_required: true
+disclosure_required: false  # Ahmad 21 Nov: no burned-in label, #ad in the caption only
 disclosure_text: "#ad  Paid partnership"
 disclosure_duration_s: 3
 no_ai_visuals: false
