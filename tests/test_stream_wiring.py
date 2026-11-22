@@ -135,3 +135,43 @@ def test_invalid_story_keeps_indexed_validation_error(wiring):
     wiring.item["story"]["payoff"]["end_s"] = 10
     with pytest.raises(pipeline.StreamPipelineError, match=r"clips\[1\] is invalid:"):
         wiring.run()
+
+
+def test_auto_sfx_reaches_export_and_report(wiring, monkeypatch):
+    from autoclip.pipeline import sfx_auto
+
+    wiring.item["sfx"] = []
+    event = {"name": "impact", "at_s": 12, "gain_db": sfx.DEFAULT_GAIN_DB, "kind": "impact"}
+    suggest = Mock(return_value=[event])
+    monkeypatch.setattr(sfx_auto, "suggest_events", suggest)
+    outcome, = wiring.run()
+    request, = wiring.requests
+    assert request.sfx == [event] and outcome.sfx == "impact"
+    assert suggest.call_args.args == (
+        wiring.prepared.runner.workspace.audio, request.start_s, request.end_s,
+    )
+    assert suggest.call_args.kwargs["seed"]
+    report = json.loads((wiring.report_dir / "report.json").read_text(encoding="utf-8"))[0]
+    assert report["sfx"] == "impact"
+
+
+@pytest.mark.parametrize("manual,enabled", [(True, True), (False, False)])
+def test_auto_sfx_respects_manual_and_setting(wiring, monkeypatch, manual, enabled):
+    from autoclip.pipeline import sfx_auto
+
+    if not manual:
+        wiring.item["sfx"] = []
+    wiring.prepared.runner.settings.auto_sfx = enabled
+    monkeypatch.setattr(sfx_auto, "suggest_events", lambda *a, **kw: pytest.fail("unexpected auto SFX"))
+    outcome, = wiring.run()
+    assert outcome.status == "exported"
+
+
+def test_auto_sfx_failure_is_nonfatal(wiring, monkeypatch):
+    from autoclip.pipeline import sfx_auto
+
+    wiring.item["sfx"] = []
+    monkeypatch.setattr(sfx_auto, "suggest_events", Mock(side_effect=OSError("decode failed")))
+    outcome, = wiring.run()
+    assert outcome.status == "exported" and wiring.requests[0].sfx == []
+    assert any("auto sfx warning: decode failed" in note for note in outcome.notes)

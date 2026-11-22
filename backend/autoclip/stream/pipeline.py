@@ -622,6 +622,17 @@ def render(
 
         destination = out_dir / export.output_filename(clip.title or f"clip-{clip.rank}", ratio)
         effect_name = ""
+        if not meta.sfx and settings.auto_sfx:
+            try:
+                from ..pipeline.sfx_auto import suggest_events
+
+                meta.sfx = suggest_events(
+                    runner.workspace.audio, clip.start_s, clip.end_s, seed=clip.id,
+                )
+            except Exception as exc:
+                warning = f"auto sfx warning: {exc}; rendering without sfx"
+                log.warning(warning)
+                notes.append(warning)
         try:
             effects = sfx.prepare_events(meta.sfx, duration)
         except (ValueError, TypeError, ffmpeg.FFmpegError) as exc:

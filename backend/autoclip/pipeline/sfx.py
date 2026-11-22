@@ -12,11 +12,13 @@ from pydantic import BaseModel, Field
 from .. import paths
 from . import ffmpeg
 
+DEFAULT_GAIN_DB = -6  # build_filtergraph adds -12 dB: effective gain is -18 dB.
+
 
 class SFXEvent(BaseModel):
     name: str = Field(min_length=1)
     at_s: float = Field(ge=0, allow_inf_nan=False)
-    gain_db: float = Field(default=-6, allow_inf_nan=False)
+    gain_db: float = Field(default=DEFAULT_GAIN_DB, allow_inf_nan=False)
     kind: Literal["impact", "riser"] = "impact"
 
     model_config = {"extra": "forbid"}
