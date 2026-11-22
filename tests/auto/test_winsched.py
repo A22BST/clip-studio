@@ -1,6 +1,8 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import pytest
+
 from autoclip.auto.winsched import (
     build_task_xml,
     install_tasks,
@@ -29,12 +31,34 @@ def test_task_xml_settings_and_actions():
             root.findtext("t:Principals/t:Principal/t:LogonType", namespaces=NS)
             == "InteractiveToken"
         )
-        assert root.findtext("t:Actions/t:Exec/t:Command", namespaces=NS) == spec.python_exe
+        command = root.findtext("t:Actions/t:Exec/t:Command", namespaces=NS)
+        if spec.action == "tick":
+            assert command == str(Path(spec.python_exe).with_name("pythonw.exe"))
+        else:
+            assert command == spec.python_exe
         assert root.findtext("t:Actions/t:Exec/t:WorkingDirectory", namespaces=NS) == spec.repo_dir
-        assert (
-            root.findtext("t:Actions/t:Exec/t:Arguments", namespaces=NS)
-            == f"-m autoclip.auto.cli {spec.action}"
-        )
+        arguments = root.findtext("t:Actions/t:Exec/t:Arguments", namespaces=NS)
+        if spec.action == "tick":
+            assert arguments.startswith('-X utf8 -c "')
+            assert "PYTHONUTF8='1'" in arguments
+            assert "AUTOCLIP_HOME=r'D:\\autoclip'" in arguments
+            # Execute the bootstrap with a fake module runner to check env and argv.
+            import os
+            import runpy
+            import sys
+            from unittest.mock import patch
+
+            with (
+                patch.dict(os.environ),
+                patch.object(sys, "argv", []),
+                patch.object(runpy, "run_module") as run,
+            ):
+                exec(arguments[len('-X utf8 -c "'):-1])
+                assert os.environ["AUTOCLIP_HOME"] == r"D:\autoclip"
+                assert os.environ["PYTHONUTF8"] == "1"
+                run.assert_called_once_with("autoclip.auto.cli", run_name="__main__")
+        else:
+            assert arguments == f"-m autoclip.auto.cli {spec.action}"
 
 
 def test_trigger_schedules():
@@ -43,7 +67,7 @@ def test_trigger_schedules():
     ]
     assert tick.findtext(".//t:Repetition/t:Interval", namespaces=NS) == "PT30M"
     assert tick.find(".//t:Repetition/t:Duration", NS) is None
-    assert tick.findtext(".//t:ExecutionTimeLimit", namespaces=NS) == "PT4H"
+    assert tick.findtext(".//t:ExecutionTimeLimit", namespaces=NS) == "PT3H"
     assert bot.find(".//t:LogonTrigger", NS) is not None
     assert bot.findtext(".//t:ExecutionTimeLimit", namespaces=NS) == "PT0S"
     assert bot.findtext(".//t:RestartOnFailure/t:Interval", namespaces=NS) == "PT1M"
@@ -100,3 +124,41 @@ def test_uninstall_commands():
     assert uninstall_tasks(False, runner) == calls
     assert len(calls) == 4
     assert calls[0] == ["schtasks", "/Delete", "/TN", "ClipStudio-Tick", "/F"]
+
+
+def test_only_cli_parsing(monkeypatch):
+    from typer.testing import CliRunner
+    from autoclip.auto import cli, winsched
+
+    calls = []
+    original = winsched.install_tasks
+
+    def install(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs, runner=lambda *a, **k: pytest.fail("ran schtasks"))
+
+    monkeypatch.setattr(winsched, "install_tasks", install)
+    result = CliRunner().invoke(cli.app, ["install-tasks", "--only", " tick,weekly "])
+    assert result.exit_code == 0, result.output
+    assert calls[0]["only"] == ["tick", "weekly"]
+    assert calls[0]["dry_run"] is True
+    assert "ClipStudio-Tick:" in result.output
+    assert "ClipStudio-Weekly:" in result.output
+    assert "ClipStudio-Bot" not in result.output
+    assert "ClipStudio-Track" not in result.output
+    assert "Dry run only" in result.output
+
+
+@pytest.mark.parametrize("value", ["", "tick,", "tick,unknown"])
+def test_only_rejects_invalid_names(value):
+    from typer.testing import CliRunner
+    from autoclip.auto.cli import app
+
+    result = CliRunner().invoke(app, ["install-tasks", "--only", value])
+    assert result.exit_code == 2
+    assert "--only" in result.output
+
+
+def test_only_filters_specs():
+    plans = install_tasks(only=["tick", "weekly"])
+    assert [p["name"] for p in plans] == ["ClipStudio-Tick", "ClipStudio-Weekly"]

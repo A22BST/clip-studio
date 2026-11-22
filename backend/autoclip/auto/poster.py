@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -20,6 +21,22 @@ from .preview import make_preview
 from .publisher import MANUAL_URL, split_platforms
 from .store import Store, parse_iso
 from .uploadpost import UploadPostClient, UploadPostError
+
+
+log = logging.getLogger(__name__)
+OUTBOX_ONLY = "no publisher configured: outbox only"
+
+
+def publisher_configured(client: Any = None) -> bool:
+    """Presence only: never create a client or refresh credentials here."""
+    from . import secrets
+    from .tiktok import credentials_ready
+
+    return (
+        client is not None
+        or secrets.secret_is_set(secrets.UPLOAD_POST_API_KEY)
+        or credentials_ready()
+    )
 
 
 def next_slot(store: Store, config: AutoConfig, now: datetime) -> datetime:
@@ -279,6 +296,9 @@ def post_due(
     sleep: Callable[[float], None] = time.sleep,
     dry_run: bool = False,
 ) -> list[int]:
+    if not publisher_configured(client):
+        log.info(OUTBOX_ONLY)
+        return []
     now = now or datetime.now(UTC)
     if dry_run:
         return dry_run_posts(store, config, notifier, now, campaigns_dir, gate_kwargs)

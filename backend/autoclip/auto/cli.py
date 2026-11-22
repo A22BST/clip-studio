@@ -281,17 +281,25 @@ def enqueue(vod: str, campaign: str, start: float = 0, end: float = 0) -> None:
 def install_tasks(
     apply: bool = typer.Option(False, "--apply", help="Really create the scheduled tasks."),
     uninstall: bool = typer.Option(False, "--uninstall"),
+    only: str | None = typer.Option(None, "--only", help="Comma-separated tasks: tick,bot,track,weekly."),
     python_exe: Path | None = typer.Option(None, help="Python of the checkout to run."),
     repo_dir: Path | None = typer.Option(None, help="Checkout directory (default: this one)."),
 ) -> None:
     """Create the Windows Task Scheduler entries. Dry run unless --apply."""
     from . import winsched
 
+    selected = None if only is None else [name.strip().lower() for name in only.split(",")]
+    try:
+        winsched.task_specs("", "", selected)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--only") from exc
+    if uninstall and only is not None:
+        raise typer.BadParameter("--only is for installation", param_hint="--only")
     if uninstall:
         winsched.uninstall_tasks(dry_run=not apply)
         return
     plans = winsched.install_tasks(
-        dry_run=not apply, python_exe=python_exe or None, repo_dir=repo_dir or None
+        dry_run=not apply, python_exe=python_exe or None, repo_dir=repo_dir or None, only=selected
     )
     for plan in plans:
         console.print(f"{plan['name']}: {' '.join(plan['command'])}")

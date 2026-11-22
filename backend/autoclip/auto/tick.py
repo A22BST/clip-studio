@@ -7,6 +7,7 @@ atomically in the store, and posting always goes through ``gate.check_post_allow
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -77,10 +78,15 @@ def post_cycle(
     now: datetime | None = None,
     gate_kwargs: dict[str, Any] | None = None,
     dry_run: bool = False,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """The cheap half: previews for new clips, scheduling of approved ones, due posts, reminders.
 
     ``dry_run``: everything except the upload; queued posts only produce "WOULD POST" pings."""
+    if not poster.publisher_configured(client):
+        log.info(poster.OUTBOX_ONLY)
+        store.log_event("outbox_only", poster.OUTBOX_ONLY)
+        key = "would_post" if dry_run else "posted"
+        return {"previews": 0, "scheduled": 0, key: 0, "publisher": poster.OUTBOX_ONLY}
     approval.restore_stale_edits(store, now)
     previews = approval.send_pending_previews(store, notifier, config, now)
     approval.auto_approve_pending(store, config, now)
@@ -92,6 +98,14 @@ def post_cycle(
     submit.send_reminders(store, notifier, now, config.submit.reminder_minutes)
     key = "would_post" if dry_run else "posted"
     return {"previews": previews, "scheduled": len(scheduled), key: len(posted)}
+
+
+def _outbox_entries(config: AutoConfig) -> dict[str, Any]:
+    """Snapshot the ledger because after_render deliberately has no return value."""
+    try:
+        return json.loads((outbox.outbox_dir(config) / "outbox.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def tick(
@@ -108,6 +122,8 @@ def tick(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {"new_jobs": 0, "jobs_run": 0, "clips": 0, "skipped": ""}
+    before = _outbox_entries(config)
+    summary.update(outbox_copied=0, outbox_held=0)
     if dry_run:
         summary["dry_run"] = True
     if store.is_paused():
@@ -134,6 +150,9 @@ def tick(
                 except Exception:
                     log.exception("Outbox failed for job %s", job["id"])
                 summary["jobs_run"] += 1
+    for key, entry in _outbox_entries(config).items():
+        if key not in before and entry.get("status") in ("copied", "held"):
+            summary[f"outbox_{entry['status']}"] += 1
     summary.update(
         post_cycle(
             store, config, notifier, client, now=now, gate_kwargs=gate_kwargs, dry_run=dry_run

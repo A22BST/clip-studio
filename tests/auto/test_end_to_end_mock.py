@@ -184,3 +184,86 @@ def test_an_unapproved_clip_never_posts_even_if_queued_by_force(env, make_clip):
     with pytest.raises(Exception):
         env.store.enqueue_post(cid, datetime.now(UTC), ["youtube"])
     assert env.store.list_posts() == []
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_keyless_tick_vod_to_outbox(env, monkeypatch, caplog, held):
+    from autoclip.auto import approval, cli, outbox, poster, schedule, secrets, submit
+
+    # Isolate credential presence from both the process and the Windows registry.
+    monkeypatch.setattr(secrets, "secret_is_set", lambda name: name.startswith("TWITCH_"))
+    monkeypatch.setenv("TWITCH_CLIENT_ID", "x")
+    monkeypatch.setenv("TWITCH_CLIENT_SECRET", "x")
+    monkeypatch.setattr(diskguard, "free_gb", lambda p: 100)
+    watcher._tokens.clear()
+    env.config.watch.baseline_on_first_run = False
+    assert env.config.selection.backend == "chain"
+    now = datetime.now(UTC)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("keyless tick entered the posting workflow")
+
+    for module, name in (
+        (approval, "send_pending_previews"), (approval, "auto_approve_pending"),
+        (schedule, "expire_stale"), (poster, "schedule_approved"),
+        (poster, "post_due"), (poster.gate, "check_post_allowed"),
+        (submit, "send_reminders"), (poster, "UploadPostClient"),
+    ):
+        monkeypatch.setattr(module, name, forbidden)
+    process = fake_pipeline(env)
+
+    def render(store, config, job):
+        count = process(store, config, job)
+        work = paths.job_work_dir(JOB)
+        (work / "transcript.json").write_text(json.dumps({"words": [
+            {"start": 12, "end": 13, "text": "naked" if held else "hello"}
+        ]}))
+        # The outbox must select the pipeline's finished SFX variant.
+        (paths.exports_dir() / JOB / "he-did-not-expect-this_sfx.mp4").write_bytes(b"sfx clip")
+        return count
+
+    calls = []
+    after_render = outbox.after_render
+
+    def export(*args, **kwargs):
+        calls.append(args[2]["id"])
+        return after_render(*args, **kwargs)
+
+    monkeypatch.setattr(outbox, "after_render", export)
+    with caplog.at_level("INFO"):
+        summary = tick.tick(
+            env.store, env.config, cli._notifier(env.config), now=now,
+            scan=lambda store, config, now=None: watcher.scan(
+                store, config, now=now, client=twitch_client(now)),
+            process=render,
+        )
+    assert summary["new_jobs"] == summary["jobs_run"] == summary["clips"] == 1
+    assert len(calls) == 1
+    assert summary["outbox_copied"] == int(not held)
+    assert summary["outbox_held"] == int(held)
+    assert poster.OUTBOX_ONLY in caplog.text
+    assert summary["publisher"] == poster.OUTBOX_ONLY
+    assert env.store.list_posts() == []
+    ledger = json.loads((outbox.outbox_dir(env.config) / "outbox.json").read_text())
+    assert len(ledger) == 1
+    from pathlib import Path
+    assert Path(next(iter(ledger.values()))["path"]).read_bytes() == b"sfx clip"
+
+
+def test_publisher_can_be_added_after_outbox_only(env, make_clip, monkeypatch):
+    from autoclip.auto import poster, secrets
+
+    make_clip(approve=True)
+    ready = False
+    monkeypatch.setattr(secrets, "secret_is_set", lambda name: ready and name == secrets.UPLOAD_POST_API_KEY)
+    notifier = RecordingNotifier()
+    now = datetime.now(UTC)
+    result = tick.post_cycle(env.store, env.config, notifier, now=now)
+    assert result["scheduled"] == 0
+    assert env.store.list_posts() == []
+    assert poster.post_due(env.store, env.config, notifier, now=now) == []
+    ready = True
+    publisher = FakePublisher()
+    result = tick.post_cycle(env.store, env.config, notifier, publisher, now=now)
+    assert result["scheduled"] == 3
+    assert len(env.store.list_posts()) == 3

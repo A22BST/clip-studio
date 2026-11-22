@@ -23,7 +23,12 @@ class TaskSpec:
     schedule: str
 
 
-def task_specs(python_exe: str | Path, repo_dir: str | Path) -> list[TaskSpec]:
+def task_specs(
+    python_exe: str | Path, repo_dir: str | Path, only: list[str] | None = None
+) -> list[TaskSpec]:
+    valid = {"tick", "bot", "track", "weekly"}
+    if only is not None and (not only or set(only) - valid):
+        raise ValueError("--only must contain tick, bot, track or weekly")
     return [
         TaskSpec(f"ClipStudio-{name}", str(python_exe), str(repo_dir), action, schedule)
         for name, action, schedule in (
@@ -32,6 +37,7 @@ def task_specs(python_exe: str | Path, repo_dir: str | Path) -> list[TaskSpec]:
             ("Track", "track", "daily"),
             ("Weekly", "weekly", "weekly"),
         )
+        if only is None or action in only
     ]
 
 
@@ -76,15 +82,28 @@ def build_task_xml(spec: TaskSpec) -> str:
     child(settings, "DisallowStartIfOnBatteries", "false")
     child(settings, "StopIfGoingOnBatteries", "false")
     child(settings, "StartWhenAvailable", "true")
-    child(settings, "ExecutionTimeLimit", "PT0S" if spec.action == "bot" else "PT4H")
+    time_limit = {"bot": "PT0S", "tick": "PT3H"}.get(spec.action, "PT4H")
+    child(settings, "ExecutionTimeLimit", time_limit)
     if spec.action == "bot":
         restart = child(settings, "RestartOnFailure")
         child(restart, "Interval", "PT1M")
         child(restart, "Count", "3")
     actions = ET.SubElement(task, "Actions", {"Context": "Author"})
     execute = child(actions, "Exec")
-    child(execute, "Command", spec.python_exe)
-    child(execute, "Arguments", f"-m autoclip.auto.cli {spec.action}")
+    if spec.action == "tick":
+        # Hidden console plus task-local environment, using schema-valid Exec fields.
+        pythonw = str(Path(spec.python_exe).with_name("pythonw.exe"))
+        child(execute, "Command", pythonw)
+        code = (
+            "import os,runpy,sys;"
+            "os.environ.update(AUTOCLIP_HOME=r'D:\\autoclip',PYTHONUTF8='1');"
+            "sys.argv=['clip-auto','tick'];"
+            "runpy.run_module('autoclip.auto.cli',run_name='__main__')"
+        )
+        child(execute, "Arguments", f'-X utf8 -c "{code}"')
+    else:
+        child(execute, "Command", spec.python_exe)
+        child(execute, "Arguments", f"-m autoclip.auto.cli {spec.action}")
     child(execute, "WorkingDirectory", spec.repo_dir)
     return '<?xml version="1.0" encoding="UTF-16"?>\n' + ET.tostring(task, encoding="unicode")
 
@@ -95,10 +114,11 @@ def install_tasks(
     *,
     python_exe: str | Path | None = None,
     repo_dir: str | Path | None = None,
+    only: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return XML/argument lists; only explicit dry_run=False invokes schtasks."""
     specs = task_specs(
-        python_exe or sys.executable, repo_dir or Path(__file__).resolve().parents[3]
+        python_exe or sys.executable, repo_dir or Path(__file__).resolve().parents[3], only
     )
     plans = []
     for spec in specs:
