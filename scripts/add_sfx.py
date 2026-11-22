@@ -1,4 +1,4 @@
-"""Mix one quiet payoff effect into an already rendered clip, copying video."""
+"""Mix one audible payoff effect into an already rendered clip, copying video."""
 
 from __future__ import annotations
 
@@ -15,12 +15,13 @@ from autoclip.pipeline import export, ffmpeg, sfx, sfx_auto
 
 
 def add_sfx(source: Path, destination: Path | None = None, *, name: str = "auto",
-            at: str = "auto", gain: float = sfx.DEFAULT_GAIN_DB) -> tuple[Path, list[dict]]:
+            at: str = "auto", gain: float = sfx.DEFAULT_GAIN_DB,
+            overwrite: bool = False) -> tuple[Path, list[dict]]:
     source = source.resolve()
     destination = (destination or source.with_name(source.stem + "_sfx.mp4")).resolve()
     if destination == source or (destination.exists() and destination.samefile(source)):
         raise ValueError("Output must not overwrite the input")
-    if destination.exists():
+    if destination.exists() and not overwrite:
         raise ValueError(f"Output already exists: {destination}")
     if not math.isfinite(gain):
         raise ValueError("Gain must be finite")
@@ -39,8 +40,10 @@ def add_sfx(source: Path, destination: Path | None = None, *, name: str = "auto"
         if at != "auto":
             events[0]["at_s"] = float(at)
     effects = sfx.prepare_events(events, info.duration_s)
-    final_filter = export.build_audio_filtergraph(config.load().export)
-    command = [ffmpeg.ffmpeg_path(), "-v", "error", "-n", "-i", str(source)]
+    # The finished clip is already loudness-normalised: a second loudnorm pass would re-level the whole
+    # clip and hide the effect. Only limit peaks here.
+    final_filter = "alimiter=limit=0.95:level=0"
+    command = [ffmpeg.ffmpeg_path(), "-v", "error", "-y" if overwrite else "-n", "-i", str(source)]
     for effect in effects:
         command += ["-i", str(effect.path)]
     if effects:
@@ -65,16 +68,18 @@ def main() -> int:
     parser.add_argument("--name", default="auto")
     parser.add_argument("--at", default="auto")
     parser.add_argument("--gain", type=float, default=sfx.DEFAULT_GAIN_DB)
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing output")
     args = parser.parse_args()
     if (args.dir is None) == (args.input is None) or (args.dir and args.output):
         parser.error("Supply an input and optional output, or --dir")
     sources = sorted(args.dir.glob("*_9x16.mp4")) if args.dir else [args.input]
     failed = False
     for source in sources:
-        if args.dir and source.with_name(source.stem + "_sfx.mp4").exists():
+        if args.dir and not args.overwrite and source.with_name(source.stem + "_sfx.mp4").exists():
             continue
         try:
-            _, events = add_sfx(source, args.output, name=args.name, at=args.at, gain=args.gain)
+            _, events = add_sfx(source, args.output, name=args.name, at=args.at, gain=args.gain,
+                                overwrite=args.overwrite)
             effect = events[0] if events else {"name": "none", "at_s": "none"}
             print(f"{source.name}: {effect['name']}, at_s={effect['at_s']}")
         except Exception as exc:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+import os
+import re
+from types import SimpleNamespace
 import shutil
 import struct
 import subprocess
@@ -93,24 +96,31 @@ def test_probe_and_endpoints(library, monkeypatch):
 def example(kind="impact", at=8.5, duration=2):
     event = sfx.SFXEvent(name="example", at_s=at, kind=kind)
     trim, delay = sfx.placement(event, duration)
-    return sfx.PreparedSFX(Path("example.wav"), event, trim, delay)
+    return sfx.PreparedSFX(Path("example.wav"), event, trim, delay, duration, -12.0)
 
 
 @pytest.mark.parametrize("kind,delay", [("impact", "8500.0000"), ("riser", "6500.0000")])
-def test_exact_filtergraph(kind, delay):
+def test_exact_filtergraph(kind, delay, monkeypatch):
+    monkeypatch.setattr(sfx, "measure_rms", lambda path: -12.0)
     graph = sfx.build_filtergraph(
         [example(kind)],
         first_input=1,
         clip_duration_s=20,
         final_filter=export.build_audio_filtergraph(ExportSettings()),
     )
+    start = 8.5 if kind == "impact" else 6.5
+    end = start + 2
     assert graph == (
-        "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[main];"
+        "[0:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        f"volume='1-(1-0.354813)*max(0,min(1,min((t-{start:.4f})/0.08,"
+        f"({end:.4f}-t)/0.08)))':eval=frame:"
+        f"enable='between(t,{start:.4f},{end:.4f})'[main];"
         "[1:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-        "atrim=start=0.0000,asetpts=PTS-STARTPTS,volume=-18.0000dB,"
+        "atrim=start=0.0000,asetpts=PTS-STARTPTS,volume=4.0000dB,"
+        "alimiter=limit=0.9:attack=1:release=30:level=0,"
         f"adelay={delay}:all=1,apad,atrim=duration=20.0000[sfx0];"
         "[main][sfx0]amix=inputs=2:duration=first:normalize=0,"
-        "loudnorm=I=-14.0:TP=-1.5:LRA=11.0[aout]"
+        "alimiter=limit=0.95:level=0:latency=1,loudnorm=I=-14.0:TP=-1.5:LRA=11.0[aout]"
     )
 
 
@@ -196,6 +206,7 @@ def test_empty_preserves_legacy_command(tmp_path, monkeypatch, overlay):
 
 
 def test_overlay_input_indices_and_bleep_order(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfx, "measure_rms", lambda path: -12.0)
     req = request(tmp_path)
     req.overlay_path = tmp_path / "logo.png"
     req.sfx = [{"name": "Boom", "at_s": 1}]
@@ -286,3 +297,77 @@ def test_synthetic_mix(tmp_path, monkeypatch, kind, payoff, inside):
         ) / len(window)
 
     assert amplitude(inside) > 10 * max(amplitude(0.7), amplitude(2.3), 1e-6)
+
+
+def test_peak_cache_tracks_mtime(tmp_path, monkeypatch):
+    asset = tmp_path / "effect.wav"
+    asset.touch()
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stderr="Peak level dB: -18.0\nPeak level dB: -12.0\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert sfx.measure_peak(asset) == -12.0
+    assert sfx.measure_peak(asset) == -12.0
+    assert len(calls) == 1
+    stat = asset.stat()
+    os.utime(asset, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
+    assert sfx.measure_peak(asset) == -12.0
+    assert len(calls) == 2
+    assert "astats=reset=0" in calls[0][calls[0].index("-af") + 1]
+
+
+@pytest.mark.parametrize("stderr", ["Peak level dB: -inf", "no measurements"])
+def test_reject_unmeasurable_peak(tmp_path, monkeypatch, stderr):
+    asset = tmp_path / "silent.wav"
+    asset.touch()
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k:
+                        SimpleNamespace(returncode=0, stderr=stderr))
+    with pytest.raises(ValueError, match="no finite audio peak"):
+        sfx.measure_peak(asset)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+                    reason="ffmpeg required")
+def test_effect_loudness_and_unchanged_surroundings(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCLIP_HOME", str(tmp_path))
+    sfx.library_dir().mkdir(parents=True)
+    asset = sfx.library_dir() / "quiet.wav"
+    source = tmp_path / "noise.wav"
+    baseline = tmp_path / "baseline.wav"
+    ducked_stream = tmp_path / "ducked_stream.wav"
+    effect_only = tmp_path / "effect_only.wav"
+    mixed = tmp_path / "mixed.wav"
+
+    def run(*args):
+        return subprocess.run([ffmpeg.ffmpeg_path(), "-hide_banner", "-nostats", "-y", *args],
+                              capture_output=True, text=True, check=True)
+
+    run("-f", "lavfi", "-i", "anoisesrc=amplitude=0.25:duration=6:sample_rate=48000:seed=42",
+        str(source))
+    run("-f", "lavfi", "-i", "sine=frequency=1200:duration=0.2:sample_rate=48000",
+        "-af", "volume=-20dB", str(asset))
+    effects = sfx.prepare_events([{"name": "quiet", "at_s": 3}], 6)
+    assert sfx.measure_peak(asset) < -35
+    # Finished clips keep their existing loudness; only limit peaks after mixing.
+    final = "alimiter=limit=0.95:level=0"
+    run("-i", str(source), "-af", "aformat=sample_rates=48000:channel_layouts=stereo," + final,
+        "-ar", "48000", str(baseline))
+    run("-i", str(baseline), "-af", "volume=0.354813:enable='between(t,3,3.2)'",
+        str(ducked_stream))
+    graph = sfx.build_filtergraph(effects, first_input=1, clip_duration_s=6, final_filter=final)
+    run("-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=6", "-i", str(asset),
+        "-filter_complex", graph, "-map", "[aout]", "-ar", "48000", str(effect_only))
+    run("-i", str(source), "-i", str(asset), "-filter_complex", graph,
+        "-map", "[aout]", "-ar", "48000", str(mixed))
+
+    def rms(path, start, duration):
+        result = run("-ss", str(start), "-i", str(path), "-t", str(duration),
+                     "-af", "astats=reset=0", "-f", "null", "-")
+        return float(re.findall(r"RMS level dB: ([^\s]+)", result.stderr)[-1])
+
+    assert rms(effect_only, 3.02, .16) >= rms(ducked_stream, 3.02, .16) + 6
+    for start in (.5, 4.5):
+        assert abs(rms(mixed, start, 1) - rms(baseline, start, 1)) < 1.5

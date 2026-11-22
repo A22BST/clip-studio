@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
+import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -12,7 +15,11 @@ from pydantic import BaseModel, Field
 from .. import paths
 from . import ffmpeg
 
-DEFAULT_GAIN_DB = -6  # build_filtergraph adds -12 dB: effective gain is -18 dB.
+DEFAULT_GAIN_DB = 0
+TARGET_PEAK_DB = -2
+#: Short percussive effects have a huge crest factor, so a peak target leaves them far quieter than
+#: speech. Level them by average loudness instead and let the limiter catch the transients.
+TARGET_RMS_DB = -8
 
 
 class SFXEvent(BaseModel):
@@ -22,6 +29,49 @@ class SFXEvent(BaseModel):
     kind: Literal["impact", "riser"] = "impact"
 
     model_config = {"extra": "forbid"}
+
+
+@lru_cache(maxsize=128)
+def _measure_peak(path: Path, mtime_ns: int) -> float:
+    """Cache astats measurements by resolved asset path and modification time."""
+    command = [ffmpeg.ffmpeg_path(), "-hide_banner", "-nostats", "-i", str(path),
+               "-vn", "-af", "aformat=sample_rates=48000:channel_layouts=stereo,astats=reset=0",
+               "-f", "null", "-"]
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode:
+        raise ffmpeg.FFmpegError("Could not measure SFX peak", command=command,
+                                 stderr=result.stderr)
+    levels = [float(value) for value in re.findall(r"Peak level dB: ([^\s]+)", result.stderr)]
+    peak = max(levels, default=float("nan"))
+    if not math.isfinite(peak):
+        raise ValueError(f"SFX {path.name!r} has no finite audio peak")
+    return peak
+
+
+@lru_cache(maxsize=128)
+def _measure_rms(path: Path, mtime_ns: int) -> float:
+    command = [ffmpeg.ffmpeg_path(), "-hide_banner", "-nostats", "-i", str(path),
+               "-vn", "-af", "aformat=sample_rates=48000:channel_layouts=stereo,astats=reset=0",
+               "-f", "null", "-"]
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode:
+        raise ffmpeg.FFmpegError("Could not measure SFX loudness", command=command,
+                                 stderr=result.stderr)
+    levels = [float(v) for v in re.findall(r"RMS level dB: ([^\s]+)", result.stderr)
+              if v not in ("-inf", "nan")]
+    if not levels:
+        raise ValueError(f"SFX {path.name!r} has no finite loudness")
+    return levels[-1]  # the 'Overall' line is printed last
+
+
+def measure_rms(path: Path) -> float:
+    path = path.resolve()
+    return _measure_rms(path, path.stat().st_mtime_ns)
+
+
+def measure_peak(path: Path) -> float:
+    path = path.resolve()
+    return _measure_peak(path, path.stat().st_mtime_ns)
 
 
 def library_dir() -> Path:
@@ -74,6 +124,8 @@ class PreparedSFX:
     event: SFXEvent
     trim_s: float
     delay_s: float
+    duration_s: float
+    peak_db: float | None = None
 
 
 #: Ahmad (21 Nov 2026): one effect per clip, at the payoff.
@@ -94,7 +146,7 @@ def prepare_events(events: list[SFXEvent | dict], clip_duration_s: float) -> lis
         if not info.has_audio:
             raise ValueError(f"SFX {event.name!r} has no audio stream")
         trim, delay = placement(event, info.duration_s)
-        prepared.append(PreparedSFX(path, event, trim, delay))
+        prepared.append(PreparedSFX(path, event, trim, delay, info.duration_s))
     return prepared
 
 
@@ -106,24 +158,34 @@ def build_filtergraph(
     final_filter: str,
     stream_filter: str = "",
 ) -> str:
-    """Mix effects at an additional -12 dB, then normalize the complete mix.
-
-    Default effective gain is -18 dB. Profanity filters affect only the stream.
-    """
-    parts = [
-        f"[0:a]{stream_filter + ',' if stream_filter else ''}"
-        "aformat=sample_rates=48000:channel_layouts=stereo[main]"
-    ]
+    """Peak-normalize accents, duck only their windows, and normalize the mix."""
+    stream_chain = [stream_filter] if stream_filter else []
+    stream_chain.append("aformat=sample_rates=48000:channel_layouts=stereo")
+    for effect in effects:
+        start = effect.delay_s
+        end = min(clip_duration_s, start + effect.duration_s - effect.trim_s)
+        if end <= start:
+            continue
+        # Ramps remain inside the effect window, including truncated early risers.
+        stream_chain.append(
+            f"volume='1-(1-0.354813)*max(0,min(1,min((t-{start:.4f})/0.08,"
+            f"({end:.4f}-t)/0.08)))':eval=frame:"
+            f"enable='between(t,{start:.4f},{end:.4f})'"
+        )
+    parts = ["[0:a]" + ",".join(stream_chain) + "[main]"]
     for i, effect in enumerate(effects):
+        rms_db = measure_rms(effect.path)
         parts.append(
             f"[{first_input + i}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
             f"atrim=start={effect.trim_s:.4f},asetpts=PTS-STARTPTS,"
-            f"volume={effect.event.gain_db - 12:.4f}dB,"
+            f"volume={TARGET_RMS_DB - rms_db + effect.event.gain_db:.4f}dB,"
+            f"alimiter=limit=0.9:attack=1:release=30:level=0,"
             f"adelay={effect.delay_s * 1000:.4f}:all=1,apad,"
             f"atrim=duration={clip_duration_s:.4f}[sfx{i}]"
         )
     labels = "[main]" + "".join(f"[sfx{i}]" for i in range(len(effects)))
     parts.append(
-        f"{labels}amix=inputs={len(effects) + 1}:duration=first:normalize=0,{final_filter}[aout]"
+        f"{labels}amix=inputs={len(effects) + 1}:duration=first:normalize=0,"
+        f"alimiter=limit=0.95:level=0:latency=1,{final_filter}[aout]"
     )
     return ";".join(parts)

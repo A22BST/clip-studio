@@ -39,6 +39,7 @@ def test_peak_and_seed(library, tmp_path):
     path = audio(tmp_path / "signal.wav")
     event, = sfx_auto.suggest_events(path, 0, 12, "a")
     assert event["at_s"] == pytest.approx(6, abs=.05)
+    assert sfx.DEFAULT_GAIN_DB == 0
     assert event["kind"] == "impact" and event["gain_db"] == sfx.DEFAULT_GAIN_DB
     for seed in ("a", "b", "c", "stable"):
         events = sfx_auto.suggest_events(path, 0, 12, seed)
@@ -100,6 +101,11 @@ def test_add_sfx_end_to_end(library, tmp_path):
     spec.loader.exec_module(module)
     with pytest.raises(ValueError, match="overwrite"):
         module.add_sfx(source, source)
+    with pytest.raises(ValueError, match="already exists"):
+        module.add_sfx(source, output)
+    module.add_sfx(source, output, name="Boom", at="3.5", overwrite=True)
+    assert video_bytes(source) == video_bytes(output)
+    assert source.read_bytes() == original and source.stat().st_mtime_ns == stat.st_mtime_ns
     batch = subprocess.run([sys.executable, str(script), "--dir", str(tmp_path)],
                            capture_output=True, text=True, check=True)
     assert batch.stdout == ""
