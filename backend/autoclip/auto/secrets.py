@@ -18,6 +18,25 @@ DISCORD_CHANNEL_ID = "DISCORD_CHANNEL_ID"
 DISCORD_OWNER_ID = "DISCORD_OWNER_ID"
 TWITCH_CLIENT_ID = "TWITCH_CLIENT_ID"
 TWITCH_CLIENT_SECRET = "TWITCH_CLIENT_SECRET"
+TIKTOK_CLIENT_KEY = "TIKTOK_CLIENT_KEY"
+TIKTOK_CLIENT_SECRET = "TIKTOK_CLIENT_SECRET"
+TIKTOK_REFRESH_TOKEN = "TIKTOK_REFRESH_TOKEN"
+TIKTOK_ACCESS_TOKEN = "TIKTOK_ACCESS_TOKEN"
+
+
+def set_secret(name: str, value: str) -> None:
+    """Persist TikTok credentials in the same Windows User environment used by readers."""
+    if name not in (TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET,
+                    TIKTOK_REFRESH_TOKEN, TIKTOK_ACCESS_TOKEN):
+        raise ValueError("Unsupported secret name")
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+    except (ImportError, OSError):
+        raise RuntimeError("Could not save TikTok credentials in Windows User environment") from None
+    os.environ[name] = value
 
 
 class MissingSecretError(RuntimeError):

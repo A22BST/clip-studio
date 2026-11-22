@@ -54,6 +54,48 @@ def _client(config):
     return UploadPostClient(None, config.upload_post.base_url, config.upload_post.profile)
 
 
+@app.command("tiktok-login")
+def tiktok_login() -> None:
+    """Open TikTok's consent screen; save tokens only after approval."""
+    from .tiktok import TikTokError, login
+
+    try:
+        # Same hidden-input method as config set-secret; no credential in argv/history.
+        for name in (secrets.TIKTOK_CLIENT_KEY, secrets.TIKTOK_CLIENT_SECRET):
+            if not secrets.secret_is_set(name):
+                value = typer.prompt(f"Value for {name}", hide_input=True).strip()
+                if not value:
+                    raise TikTokError("Empty credential; nothing authorized")
+                secrets.set_secret(name, value)
+        console.print("Approve in your browser to connect TikTok. No clip is uploaded by login.")
+        login(mode=load_config().tiktok.mode)
+    except (TikTokError, secrets.MissingSecretError, RuntimeError, OSError):
+        console.print("TikTok login failed or was denied. Check app settings and retry.")
+        raise typer.Exit(1) from None
+    console.print("TikTok connected. Tokens saved in Windows User environment.")
+
+
+@app.command("tiktok-status")
+def tiktok_status() -> None:
+    """Read-only credential presence and creator-info check; never refresh or save tokens."""
+    from .tiktok import TikTokError, TikTokPublisher
+
+    for name in (secrets.TIKTOK_CLIENT_KEY, secrets.TIKTOK_CLIENT_SECRET,
+                 secrets.TIKTOK_ACCESS_TOKEN, secrets.TIKTOK_REFRESH_TOKEN):
+        console.print(f"{name}: {'present' if secrets.secret_is_set(name) else 'missing'}")
+    try:
+        info = TikTokPublisher().creator_info(refresh=False)
+    except (TikTokError, secrets.MissingSecretError):
+        console.print(
+            "Creator query unavailable: inbox-only grants lack video.publish; "
+            "expired tokens need login/refresh."
+        )
+        raise typer.Exit(1) from None
+    # Do not echo untrusted API strings or avatar URLs (which may carry signed tokens).
+    console.print("Creator query succeeded.")
+    console.print(f"SELF_ONLY available: {'SELF_ONLY' in info.get('privacy_level_options', [])}")
+
+
 @app.command()
 def tick(
     dry_run: bool = typer.Option(

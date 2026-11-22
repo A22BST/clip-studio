@@ -84,6 +84,10 @@ class UploadPostConfig(_Section):
     manual_platforms: list[str] = []
 
 
+class TikTokConfig(_Section):
+    mode: Literal["inbox", "direct_private"] = "inbox"
+
+
 class WatchConfig(_Section):
     max_vod_age_hours: float = Field(default=48, gt=0)
     #: Longest piece of a VOD processed as one job (transcribing 3 h takes ~30 min here).
@@ -136,6 +140,7 @@ class AutoConfig(_Section):
     min_qa_to_send: int = Field(default=60, ge=0, le=100)
     post: PostConfig = PostConfig()
     upload_post: UploadPostConfig = UploadPostConfig()
+    tiktok: TikTokConfig = TikTokConfig()
     watch: WatchConfig = WatchConfig()
     disk: DiskConfig = DiskConfig()
     selection: SelectionConfig = SelectionConfig()

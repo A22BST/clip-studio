@@ -143,6 +143,12 @@ def deadline_text(deadline, tz_name: str | None) -> str:
 def _announce(notifier, post, auto, tz_name: str | None = None):
     deadline = parse_iso(post["submit_deadline"])
     for platform, result in post["results"].items():
+        if platform == "tiktok" and post["request_id"].startswith("tiktok"):
+            notifier.send_text(
+                result.get("message")
+                or "TikTok upload processing; check inbox before publishing."
+            )
+            continue
         url = result.get("url") or result.get("message") or "URL pending"
         text = chr(10).join(
             [
@@ -281,6 +287,14 @@ def post_due(
         profile=config.upload_post.profile,
         config=config.upload_post,
     )
+    from .tiktok import TikTokPublisher, TikTokRouter, credentials_ready
+
+    tiktok_ready = credentials_ready()
+    # Route persisted TikTok IDs even after credentials are removed: never poll them
+    # through Upload-Post or silently send an existing share again.
+    client = TikTokRouter(
+        client, TikTokPublisher(config=config.tiktok, store=store), store, enabled=tiktok_ready
+    )
     refresh_urls(store, client, notifier)
     finished = []
     # Recover uploads whose process stopped after persisting the request ID.
@@ -318,7 +332,9 @@ def post_due(
         auto = load_auto_campaign(clip["campaign_key"], campaigns_dir)
         request_id, results = post["request_id"], dict(post["results"])
         api_platforms, manual = split_platforms(
-            post["platforms"], config.upload_post.manual_platforms
+            post["platforms"],
+            [p for p in config.upload_post.manual_platforms
+             if not ((tiktok_ready or request_id.startswith("tiktok")) and p.lower() == "tiktok")],
         )
         for platform in manual:
             results[platform] = {"url": MANUAL_URL, "success": True, "message": "post by hand"}
@@ -361,6 +377,9 @@ def post_due(
             submit_deadline=now + timedelta(minutes=auto.campaign.submit_deadline_min),
         )
         _announce(notifier, store.get_post(post_id), auto, config.post.timezone)
+        if tiktok_ready and "tiktok" in api_platforms:
+            tags = " ".join("#" + h.lstrip("#") for h in clip["hashtags"])
+            notifier.send_text(f"TikTok caption for manual publishing:\n{clip['caption']}\n{tags}")
         with suppress(Exception):
             submit_log.append_posted(store, config, post_id)
         if manual:
