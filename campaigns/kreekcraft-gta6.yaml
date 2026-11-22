@@ -7,7 +7,7 @@ name: KreekCraft GTA 6 Clipping
 type: cpm
 platforms: [tiktok, instagram, youtube]
 rate_per_1k_usd: 1.0
-min_duration_s: 20
+min_duration_s: 15  # campaign states no minimum; Ahmad 22 Nov: keep shorter okay clips (was 20)
 max_duration_s: 60
 required_hashtags: [ad, GTA6, KreekCraft, GrandTheftAutoVI]  # #ad in the caption is the paid disclosure (Ahmad, 21 Nov)
 required_caption_phrases: ["Watch KreekCraft on YouTube and Twitch"]
