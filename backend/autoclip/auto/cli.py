@@ -130,6 +130,16 @@ def init_config_cmd(force: bool = typer.Option(False, "--force", help="Overwrite
     console.print(f"Wrote {target}")
 
 
+@app.command("outbox")
+def outbox_cmd() -> None:
+    """Show today's copied count and the local outbox index."""
+    from .outbox import outbox_dir, today_count
+
+    config = load_config()
+    console.print(f"Today's copied clips: {today_count(config)}")
+    console.print(str(outbox_dir(config) / "INDEX.md"))
+
+
 @app.command()
 def bot() -> None:
     """Run the approval bot (long-running; Discord by default). It also posts due clips."""

@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import approval, diskguard, poster, runner, schedule, submit, watcher
+from . import approval, diskguard, outbox, poster, runner, schedule, submit, watcher
 from .config import AutoConfig, auto_dir
 from .notify import Notifier
 from .store import Store
@@ -129,6 +129,10 @@ def tick(
                 if job is None:
                     break
                 summary["clips"] += process(store, config, job)
+                try:
+                    outbox.after_render(store, config, job, now=now, dry_run=dry_run)
+                except Exception:
+                    log.exception("Outbox failed for job %s", job["id"])
                 summary["jobs_run"] += 1
     summary.update(
         post_cycle(

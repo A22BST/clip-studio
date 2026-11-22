@@ -130,6 +130,25 @@ class SubmitConfig(_Section):
         return sorted(set(value))
 
 
+class OutboxConfig(_Section):
+    dir: str = ""  # default: <repo>/to-post/auto (same root lookup as campaigns)
+    min_qa: int = Field(default=70, ge=0, le=100)
+    block_keywords: list[str] = [
+        r"\bnaked\b", r"\bnude\b", r"\bnudity\b", r"\bsex\b", r"\bsexual\b",
+        r"\bporn\b", r"\bstrip\s+club\b", r"\bstripper\b", r"\bboobs\b",
+        r"\bdildo\b", r"\bbdsm\b", r"\brape\b", r"\bn[i1!]+gg(?:er|a)(?:s|z)?\b",
+    ]
+
+    @field_validator("block_keywords")
+    @classmethod
+    def _regexes(cls, value: list[str]) -> list[str]:
+        import re
+
+        for pattern in value:
+            re.compile(pattern, re.IGNORECASE)
+        return value
+
+
 class AutoConfig(_Section):
     #: The chat: one-way pings + /pause /resume /status /submitted. Telegram is the default;
     #: the Discord code is kept but is no longer part of the default path.
@@ -148,6 +167,7 @@ class AutoConfig(_Section):
     tracker: TrackerConfig = TrackerConfig()
     throttle: ThrottleConfig = ThrottleConfig()
     submit: SubmitConfig = SubmitConfig()
+    outbox: OutboxConfig = OutboxConfig()
     #: Delete the downloaded VOD after a job finishes (exports are kept).
     delete_source_after_render: bool = True
 
