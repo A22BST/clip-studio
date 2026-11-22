@@ -129,7 +129,7 @@ def test_slices(env, duration, limit, expected):
     [
         {"active": False},
         {"ends_at": "2026-11-19"},
-        {"platform": "youtube"},
+        {"platform": "unsupported"},
     ],
 )
 def test_ineligible_campaign_never_calls_twitch(env, meta):
@@ -219,3 +219,95 @@ def test_diskguard_checks_autoclip_root(env, monkeypatch, tmp_path):
     monkeypatch.setattr(diskguard, "free_gb", lambda path: observed.append(path) or 10)
     assert diskguard.disk_ok(env.config) == (True, "")
     assert observed == [Path(tmp_path).resolve()]
+
+
+def youtube_env(env):
+    env.sidecar.write_text(
+        'streamers: ["@DylanPage"]\nplatform: youtube\nstarts_at: 2026-11-19\n',
+        encoding="utf-8",
+    )
+
+
+def test_youtube_metadata_only(monkeypatch):
+    import yt_dlp
+
+    class FakeYDL:
+        def __init__(self, options):
+            assert options["skip_download"] is True
+            assert options["playlistend"] == 5
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def extract_info(self, url, download):
+            assert url == "https://www.youtube.com/@DylanPage/streams"
+            assert download is False
+            base = {
+                "id": "yt1",
+                "title": "Marathon",
+                "live_status": "was_live",
+                "release_timestamp": NOW.timestamp(),
+                "duration": 3600,
+            }
+            return {
+                "entries": [
+                    base,
+                    {**base, "live_status": "is_upcoming"},
+                    {**base, "duration": None},
+                    {**base, "release_timestamp": None},
+                ]
+            }
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+    result = watcher._youtube_vods("@DylanPage")
+    assert len(result) == 1
+    assert result[0]["url"] == "https://www.youtube.com/watch?v=yt1"
+    assert result[0]["created_at"] == NOW.isoformat()
+    assert result[0]["duration"] == "3600s"
+    with pytest.raises(ValueError, match="@handles"):
+        watcher._youtube_vods("DylanPage")
+
+
+def test_youtube_queues_bounded_slices_and_deduplicates(env, monkeypatch):
+    youtube_env(env)
+    monkeypatch.setattr(watcher, "_get", lambda *a, **k: pytest.fail("Twitch called"))
+    monkeypatch.setattr(watcher, "_youtube_vods", lambda handle: [vod("yt1", "7h")])
+    ids = watcher.scan(env.store, env.config, now=NOW)
+    assert len(ids) == 2
+    jobs = [env.store.get_job(job_id) for job_id in ids]
+    assert all(job["platform"] == "youtube" for job in jobs)
+    assert [(job["start_s"], job["end_s"]) for job in jobs] == [(0, 10800), (10800, 21600)]
+    assert watcher.scan(env.store, env.config, now=NOW) == []
+
+
+@pytest.mark.parametrize(
+    "live,old,expected", [(False, False, 1), (True, False, 0), (False, True, 0)]
+)
+def test_youtube_live_and_source_cutoff(env, monkeypatch, live, old, expected):
+    youtube_env(env)
+    env.config.watch.max_vod_age_hours = 240
+    entry = {**vod("yt1", created=NOW - timedelta(days=2) if old else NOW), "is_live": live}
+    monkeypatch.setattr(watcher, "_youtube_vods", lambda handle: [entry])
+    ids = watcher.scan(env.store, env.config, now=NOW)
+    assert len(ids) == expected
+    if ids:
+        assert env.store.get_job(ids[0])["end_s"] == 3600
+
+
+def test_youtube_failed_baseline_retried(env, monkeypatch):
+    youtube_env(env)
+    env.config.watch.baseline_on_first_run = True
+
+    def fail(handle):
+        raise ValueError("test failure")
+
+    monkeypatch.setattr(watcher, "_youtube_vods", fail)
+    assert watcher.scan(env.store, env.config, now=NOW) == []
+    assert not env.store.get_meta("watch_baseline_done")
+    monkeypatch.setattr(watcher, "_youtube_vods", lambda handle: [vod("yt1")])
+    assert watcher.scan(env.store, env.config, now=NOW) == []
+    assert env.store.get_meta("watch_baseline_done") == "1"
+    assert len(env.store.list_jobs("skipped")) == 1

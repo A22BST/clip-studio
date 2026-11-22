@@ -1,0 +1,19 @@
+streamers: ["@DylanPage"]
+platform: youtube
+active: true
+starts_at: 2026-11-19
+ends_at: null
+budget_usd: 4953
+cap_per_clip_usd: 250
+submit_url: "https://contentrewards.com/c/campaigns/39753a1a-f1f3-491b-a8f6-0cfee0af0c97"
+notes: >
+  Source handle supplied by owner; metadata verification could not connect through
+  the environment's configured proxy on 22 Nov 2026. No alternate handle guessed.
+  120-hour marathon starting 19 Nov 2026; stop when marathon ends. No exact end
+  timestamp supplied, so ends_at remains null as requested. Budget is remaining USD.
+  YouTube discovery supported, but automated stream CLI YouTube URL ingest is
+  still missing and requires changes outside this task's allowed files.
+  Existing renderer can fall back from facecam to gameplay: review every Dylan
+  clip for whole-clip camera focus until that fallback is guarded.
+  Default watcher waits until offline and ignores sources older than 48 hours;
+  a 120-hour archive may need a larger watch.max_vod_age_hours before processing.

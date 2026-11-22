@@ -1,0 +1,23 @@
+# Campaign page rules supplied on 2026-11-22; page is the source of truth.
+name: ClipUp GTA VI Logo
+type: cpm
+platforms: [instagram, tiktok]
+rate_per_1k_usd: 0.30
+min_duration_s: 15
+max_duration_s: 60
+required_hashtags: [clipup]
+required_caption_phrases: []
+required_overlay: clipup-logo.png
+disclosure_required: false
+spoiler_policy: light
+notes: >
+  Clip ANY streamer posting for GTA VI and show the official ClipUp logo on screen.
+  Caption must include #clipup. English captions and subtitles.
+  Official logo is not yet available: owner must put it at campaigns/assets/clipup-logo.png.
+  A missing asset is a WARNING when loading the campaign; the existing render/post
+  rules still require the logo before an eligible clip can pass. Keep inactive until ready.
+  Instagram pays $0.30 per 1K views. TikTok pays up to $0.30 per 1K views for
+  tier-1 countries only (Canada, US, UK and one unspecified country); other
+  countries are not paid. Owner must verify the fourth country on the page.
+  Min payout $0.90; max payout $150 per clip. $83 of $15000 used on 22 Nov 2026.
+  Low-priority filler: enable with the sidecar active flag when ready.

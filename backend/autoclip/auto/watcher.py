@@ -1,4 +1,4 @@
-"""Discover Twitch archives and queue bounded slices without downloading media."""
+"""Discover Twitch and YouTube streams and queue slices without downloading media."""
 
 from __future__ import annotations
 
@@ -70,6 +70,51 @@ def _get(client: httpx.Client, endpoint: str, **params: str) -> list[dict[str, A
     return []  # Both attempts either return data or raise.
 
 
+def _youtube_vods(streamer: str) -> list[dict[str, Any]]:
+    """Read the latest five streams from the exact configured YouTube handle."""
+    import yt_dlp
+
+    if not re.fullmatch(r"@[A-Za-z0-9_.-]+", streamer):
+        raise ValueError("YouTube streamers must be explicit @handles")
+    options = {
+        "skip_download": True,
+        "extract_flat": False,
+        "playlistend": 5,
+        "quiet": True,
+        "no_warnings": True,
+        "ignore_no_formats_error": True,
+        "socket_timeout": 15,
+        "retries": 0,
+        "extractor_retries": 0,
+    }
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            data = ydl.extract_info(f"https://www.youtube.com/{streamer}/streams", download=False)
+    except yt_dlp.utils.DownloadError as exc:
+        raise ValueError("YouTube metadata discovery failed") from exc
+    if not data:
+        raise ValueError("YouTube returned no metadata")
+    vods = []
+    for entry in data.get("entries") or []:
+        if not entry or entry.get("live_status") not in {"is_live", "was_live", "post_live"}:
+            continue
+        timestamp = entry.get("release_timestamp") or entry.get("timestamp")
+        duration = entry.get("duration")
+        if timestamp is None or duration is None or duration <= 0:
+            continue  # Never queue an unbounded live download or guess the source date.
+        vods.append(
+            {
+                "id": entry["id"],
+                "title": entry.get("title") or "",
+                "created_at": datetime.fromtimestamp(timestamp, UTC).isoformat(),
+                "duration": f"{int(duration)}s",
+                "url": f"https://www.youtube.com/watch?v={entry['id']}",
+                "is_live": entry.get("live_status") == "is_live",
+            }
+        )
+    return vods
+
+
 def scan(
     store: Store,
     config: AutoConfig,
@@ -98,28 +143,34 @@ def scan(
         for campaign in campaigns:
             if not campaign.is_live(now)[0]:
                 continue
-            if campaign.meta.platform != "twitch":
+            platform = campaign.meta.platform
+            if platform not in {"twitch", "youtube"}:
                 log.info("Skipping unsupported watcher platform for campaign %s", campaign.key)
                 continue
             for streamer in campaign.meta.streamers:
                 scanned = True
                 try:
-                    users = _get(http, "users", login=streamer)
-                    if not users:
-                        continue
-                    vods = _get(http, "videos", user_id=users[0]["id"], type="archive", first="5")
-                    if (
-                        not baseline
-                        and config.watch.wait_until_offline
-                        and _get(http, "streams", user_login=streamer)
-                    ):
-                        continue
+                    if platform == "youtube":
+                        vods = _youtube_vods(streamer)
+                    else:
+                        users = _get(http, "users", login=streamer)
+                        if not users:
+                            continue
+                        vods = _get(
+                            http, "videos", user_id=users[0]["id"], type="archive", first="5"
+                        )
+                        if (
+                            not baseline
+                            and config.watch.wait_until_offline
+                            and _get(http, "streams", user_login=streamer)
+                        ):
+                            continue
                     for vod in vods:
-                        if store.vod_known("twitch", vod["id"]):
+                        if store.vod_known(platform, vod["id"]):
                             continue
                         fields = {
                             "campaign_key": campaign.key,
-                            "platform": "twitch",
+                            "platform": platform,
                             "vod_id": vod["id"],
                             "streamer": streamer,
                             "title": vod["title"],
@@ -130,6 +181,14 @@ def scan(
                             store.add_job(**fields, state="skipped")
                             continue
                         created = parse_iso(vod["created_at"])
+                        if not baseline and config.watch.wait_until_offline and vod.get("is_live"):
+                            continue
+                        if (
+                            created
+                            and campaign.meta.starts_at
+                            and created.date() < campaign.meta.starts_at
+                        ):
+                            continue
                         if created is None or now - created > timedelta(
                             hours=config.watch.max_vod_age_hours
                         ):
@@ -139,7 +198,7 @@ def scan(
                         duration = parse_duration(vod["duration"])
                         size = config.watch.slice_hours * 3600
                         slices = (
-                            [(0, 0)]
+                            [(0, duration if platform == "youtube" else 0)]
                             if duration <= size
                             else [
                                 (index * size, min((index + 1) * size, duration))
@@ -154,7 +213,9 @@ def scan(
                                 queued.append(job_id)
                 except (httpx.HTTPError, ValueError, KeyError, TypeError):
                     # Exception text, HTTP bodies and request URLs may contain credentials.
-                    log.warning("Twitch discovery failed for streamer %s; continuing", streamer)
+                    log.warning(
+                        "%s discovery failed for streamer %s; continuing", platform, streamer
+                    )
                     failed = True
     if scanned and not failed:
         store.set_meta("watch_baseline_done", "1")

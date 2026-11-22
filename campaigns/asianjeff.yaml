@@ -1,0 +1,18 @@
+# Campaign page rules supplied on 2026-11-22; page is the source of truth.
+name: AsianJeff GTA 6
+type: cpm
+platforms: [tiktok, instagram, youtube, x]
+rate_per_1k_usd: 1.00
+min_duration_s: 15
+max_duration_s: 60
+required_hashtags: [asianjeff]
+required_caption_phrases: []
+required_overlay: ""
+disclosure_required: false
+spoiler_policy: light
+notes: >
+  Only AsianJeff's GTA 6 playthrough from 19 Nov 2026 onward, sourced from
+  https://www.twitch.tv/asianjeff. Caption must include #asianjeff.
+  English captions and subtitles. No overlay requirement stated.
+  Min payout $10; max payout $300 per clip. $660 of $2500 used on 22 Nov 2026.
+  X is accepted by the campaign but requires a supported manual posting/submission path.

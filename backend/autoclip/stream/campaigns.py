@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Literal, Self
@@ -16,7 +17,7 @@ class Campaign(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     name: str = Field(min_length=1)
-    platforms: list[Literal["tiktok", "youtube", "instagram"]] = Field(default_factory=list)
+    platforms: list[Literal["tiktok", "youtube", "instagram", "x"]] = Field(default_factory=list)
     min_duration_s: float = Field(default=0, ge=0)
     max_duration_s: float = Field(default=90, gt=0)
     required_hashtags: list[str] = Field(default_factory=list)
@@ -87,7 +88,14 @@ def load_campaign(name_or_path: str | Path, campaigns_dir: str | Path | None = N
         raise FileNotFoundError(f"Campaign file not found: {path}")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        return Campaign.model_validate(data)
+        campaign = Campaign.model_validate(data)
+        if campaign.required_overlay:
+            overlay = Path(campaign.required_overlay)
+            if not overlay.is_absolute():
+                overlay = directory / "assets" / overlay
+            if not overlay.is_file():
+                logging.getLogger(__name__).warning("Missing required overlay file: %s", overlay)
+        return campaign
     except (yaml.YAMLError, ValidationError) as exc:
         fields = ", ".join(Campaign.model_fields)
         raise ValueError(f"Invalid campaign {path}: {exc}. Valid fields: {fields}") from exc

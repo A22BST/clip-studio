@@ -1,0 +1,14 @@
+streamers: [kreekcraft, asianjeff, laurenhamdenn]
+platform: twitch
+active: false
+ends_at: null
+budget_usd: 14917
+cap_per_clip_usd: 150
+submit_url: "https://contentrewards.com/c/campaigns/802cf95a-ea84-4070-9a96-8a917831cb16"
+notes: >
+  Budget remaining as of 22 Nov 2026. Low-priority filler, disabled by default.
+  Any GTA 6 streamer is eligible; these three are the initial watch list.
+  Official campaigns/assets/clipup-logo.png is pending. Missing file is a load
+  warning; logo remains required on rendered clips. Verify TikTok's fourth tier-1 country.
+  Existing store deduplicates VODs across campaigns: enabling this flag will not
+  create ClipUp jobs for VODs already known under another campaign.

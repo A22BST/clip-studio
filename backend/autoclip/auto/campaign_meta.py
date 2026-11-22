@@ -22,10 +22,11 @@ from ..stream.campaigns import Campaign, load_campaign
 class AutoMeta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    streamers: list[str] = Field(default_factory=list)  # Twitch logins
+    streamers: list[str] = Field(default_factory=list)  # Twitch logins or YouTube @handles
     platform: str = "twitch"
     active: bool = True
     ends_at: date | None = None
+    starts_at: date | None = None  # Earliest eligible source stream date (UTC).
     budget_usd: float | None = Field(default=None, gt=0)
     #: Max payout per clip (per post): the budget estimate never counts more than this for one post.
     cap_per_clip_usd: float | None = Field(default=None, gt=0)
