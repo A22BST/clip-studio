@@ -237,6 +237,7 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
     def validate(text):
         try:
             payload = extract_json_object(text)
+            _pad_story_picks(payload, data, transcript)
             # Validate without reserializing parsed models: preserve story and sfx verbatim.
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             validate_highlights(job_id)
@@ -253,6 +254,63 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         raise error from exc
     _save_meta(work, result)
     return out
+
+
+def _pad_story_picks(payload: dict, data: dict, transcript: Transcript) -> None:
+    """Set story envelopes from measured words, bounded by their source candidate.
+
+    Minimum-duration padding is balanced in seconds, spilling to the available
+    side at candidate edges. If it cannot reach the minimum, keep the tight
+    envelope so the story check can reject insufficient footage.
+    """
+    from ..pipeline.highlights import Story
+
+    words = transcript.words
+    limits = data.get("limits", {})
+    minimum = limits.get("min_duration_s", 20.0)
+    maximum = limits.get("max_duration_s", 90.0)
+    for pick in payload.get("clips", []):
+        if not isinstance(pick, dict) or pick.get("story") is None:
+            continue
+        story = Story.model_validate(pick["story"])
+        first, last = pick.get("start_word_index"), pick.get("end_word_index")
+        if not isinstance(first, int) or not isinstance(last, int) or first >= last:
+            continue  # Leave malformed ranges to the existing validator.
+        candidate = next(
+            (c for c in data.get("candidates", [])
+             if c["first_word"] <= first <= last <= c["last_word"]),
+            None,
+        )
+        if candidate is None:
+            continue
+        lo, hi = candidate["first_word"], candidate["last_word"]
+        first = next(
+            (i for i in range(lo, hi + 1) if words[i].start >= story.setup.start_s - 2.0),
+            None,
+        )
+        last = next(
+            (i for i in range(hi, lo - 1, -1) if words[i].end <= story.payoff.end_s + 2.5),
+            None,
+        )
+        if first is None or last is None or first >= last:
+            continue
+        while first < last and words[last].end - words[first].start > maximum:
+            first += 1
+        tight_first, tight_last = first, last
+        left_pad = right_pad = 0.0
+        while words[last].end - words[first].start < minimum:
+            left_ok = first > lo and words[last].end - words[first - 1].start <= maximum
+            right_ok = last < hi and words[last + 1].end - words[first].start <= maximum
+            if not left_ok and not right_ok:
+                first, last = tight_first, tight_last
+                break
+            if left_ok and (not right_ok or left_pad <= right_pad):
+                left_pad += words[first].start - words[first - 1].start
+                first -= 1
+            else:
+                right_pad += words[last + 1].end - words[last].end
+                last += 1
+        pick["start_word_index"], pick["end_word_index"] = first, last
 
 
 def _with_transcript_times(candidate: dict, transcript: Transcript) -> dict:

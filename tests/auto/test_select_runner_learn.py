@@ -400,7 +400,12 @@ def test_chain_selection_sfx_prompt_and_preserves_fields(env, work, monkeypatch,
         assert "ignore" not in note
     else:
         assert "No SFX is available. Use sfx: [] for every clip." in note
-    assert json.loads(out.read_text(encoding="utf-8")) == payload
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["clips"][0]["start_word_index"] < clip["start_word_index"]
+    assert saved["clips"][0]["end_word_index"] < clip["end_word_index"]
+    clip.update(start_word_index=saved["clips"][0]["start_word_index"],
+                end_word_index=saved["clips"][0]["end_word_index"])
+    assert saved == payload
     before = out.read_bytes()
     assert select.validate_highlights(JOB) == 1
     assert out.read_bytes() == before
