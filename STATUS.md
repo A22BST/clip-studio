@@ -365,3 +365,14 @@ Merged on main (NOT pushed since `27beed2`; Ahmad said not to push the free-chai
   Codex's writable root is the session's current folder: `cd` into the worktree before launching a Codex job.
 - Open for Ahmad: Upload-Post key, Telegram bot, Twitch secret reset, Whop payout check, join AsianJeff + Dylan Page, jet-ski clip by hand on
   Instagram + YouTube Shorts (22 Nov) and submit each link within 30 min.
+
+### Master chat 2, late update (22 Nov)
+- Main (unpushed): outbox (`to-post/auto/<date>/` with captions + INDEX, lenient QA 70, keyword hold), key-less tick (outbox only, no uploads without a publisher),
+  automatic payoff SFX (`pipeline/sfx_auto.py`, `scripts/add_sfx.py`), refine() keeps a payoff tail, chain picks padded around story beats, min clip 15 s,
+  TikTok publisher (official API, inbox mode, `clip-auto tiktok-login`, guide `docs/setup/tiktok-developer-app.md`, mocked tests only).
+- Scheduled tasks installed 22 Nov: `ClipStudio-Tick` (every 30 min, key-less = outbox only) and `ClipStudio-Weekly` (Mon 08:00). Bot and Track NOT installed
+  (need tokens/publisher). Remove with `clip-auto install-tasks --only tick,weekly --uninstall`.
+- Clips ready (hand-post): `to-post/` (jet-ski _sfx, pool bed), `to-post/extras/` (tiger/shark _sfx, bigfoot, rat man), `to-post/day3/` (5 re-rendered).
+- gta6-clipper: ideas only (`D:\gta6-clipper-trial\REPORT2.md`); also installed as a Claude skill at `~/.claude/skills/gta6-clipper` at Ahmad's request (not used).
+- Next: Upload-Post free key (IG + YT), TikTok developer app, crash-out detector pass 3 (uncommitted in its worktree), per-creator badge generator,
+  vision judge (docs/free-tools-research.md #2), re-render the Day 2 and Bigfoot/tracker jobs' older picks, STATUS/push when Ahmad says.
