@@ -146,6 +146,44 @@ class AudioFeatures:
     duration_s: float
 
 
+@dataclass
+class VoiceAudioFeatures(AudioFeatures):
+    """Optional voiced F0 estimates; frozen audio-hype extraction is unchanged."""
+
+    pitch_hz: np.ndarray = field(default_factory=lambda: np.empty(0))
+
+
+def _chunk_pitch(pcm: np.ndarray, hop_frames: int) -> np.ndarray:
+    """Bounded 20 ms autocorrelation, median voiced F0 per hop (80-600 Hz).
+
+    A periodicity gate rejects broadband noise. This is a cheap mixed-audio
+    estimate, not speaker separation, and can follow instruments/game dialogue.
+    """
+    # Five evenly spaced 20 ms frames/hop bound pitch work independently of
+    # stream duration; loudness still uses every frame.
+    stride = max(1, hop_frames // 5)
+    frames = pcm.reshape(-1, hop_frames, 320)[:, ::stride, :].astype(np.float32)
+    frames -= frames.mean(axis=-1, keepdims=True)
+    spectrum = np.fft.rfft(frames, n=1024, axis=-1)
+    corr = np.fft.irfft(np.abs(spectrum) ** 2, n=1024, axis=-1)[..., :201]
+    # Compensate for the shrinking overlap at increasing lags.
+    corr /= np.arange(320, 119, -1)
+    corr /= np.maximum(corr[..., :1], 1e-12)
+    band = corr[..., 27:201]
+    maxima = (band[..., 1:-1] >= band[..., :-2]) & (band[..., 1:-1] > band[..., 2:])
+    strong = maxima & (band[..., 1:-1] >= 0.9 * band.max(axis=-1, keepdims=True))
+    lag = np.argmax(strong, axis=-1) + 28
+    voiced = strong.any(axis=-1) & (band.max(axis=-1) >= 0.6)
+    pitches = np.where(voiced, 16000 / lag, 0.0)
+    # Median over voiced frames without all-NaN warnings.
+    result = np.zeros(len(pitches))
+    for i, row in enumerate(pitches):
+        active = row[row > 0]
+        if len(active) >= frames.shape[1] / 4:
+            result[i] = np.median(active)
+    return result
+
+
 def _chunk_features(pcm: np.ndarray, hop_frames: int) -> np.ndarray:
     frames = pcm.reshape(-1, hop_frames, 320).astype(np.float32) / 32768.0
     spectrum = np.abs(np.fft.rfft(frames * np.hanning(320), axis=-1)) ** 2
@@ -181,7 +219,12 @@ def _chunk_features(pcm: np.ndarray, hop_frames: int) -> np.ndarray:
     )
 
 
-def audio_features(media: Path, *, config: AudioHypeConfig | None = None) -> AudioFeatures:
+def audio_features(
+    media: Path,
+    *,
+    config: AudioHypeConfig | None = None,
+    include_pitch: bool = False,
+) -> AudioFeatures:
     """Stream ffmpeg PCM; missing audio is empty, other decode errors are explicit.
 
     Incomplete final hops are discarded, avoiding padding-induced impulses.
@@ -211,6 +254,7 @@ def audio_features(media: Path, *, config: AudioHypeConfig | None = None) -> Aud
         "-",
     ]
     blocks = []
+    pitch_blocks = []
     decoded_bytes = 0
     with (
         TemporaryFile() as errors,
@@ -227,6 +271,10 @@ def audio_features(media: Path, *, config: AudioHypeConfig | None = None) -> Aud
                     blocks.append(
                         _chunk_features(np.frombuffer(pending[:usable], "<i2"), hop_frames)
                     )
+                    if include_pitch:
+                        pitch_blocks.append(
+                            _chunk_pitch(np.frombuffer(pending[:usable], "<i2"), hop_frames)
+                        )
                     pending = pending[usable:]
             proc.wait()
         except BaseException:
@@ -240,11 +288,16 @@ def audio_features(media: Path, *, config: AudioHypeConfig | None = None) -> Aud
             if "does not contain any stream" not in error:
                 raise FFmpegError("Audio analysis failed.", command=command, stderr=error)
     values = np.concatenate(blocks) if blocks else np.empty((0, 9))
-    return AudioFeatures(
+    result = AudioFeatures(
         (np.arange(len(values)) + 0.5) * cfg.hop_s,
         *(values[:, i] for i in range(9)),
         decoded_bytes / 32000,
     )
+    if include_pitch:
+        return VoiceAudioFeatures(
+            **vars(result), pitch_hz=np.concatenate(pitch_blocks) if pitch_blocks else np.empty(0)
+        )
+    return result
 
 
 def _robust_baseline(values: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
@@ -283,7 +336,9 @@ def peaks_from_features(
     duration = features.duration_s if duration_s is None else duration_s
     if not math.isfinite(duration) or duration < 0:
         raise ValueError("duration_s must be finite and nonnegative")
-    arrays = [np.asarray(getattr(features, f.name), dtype=float) for f in fields(features)[:-1]]
+    arrays = [
+        np.asarray(getattr(features, f.name), dtype=float) for f in fields(AudioFeatures)[:-1]
+    ]
     if any(a.ndim != 1 or len(a) != len(arrays[0]) for a in arrays):
         raise ValueError("feature arrays must be aligned and one-dimensional")
     if not limit or duration < cfg.min_history_s + cfg.hop_s or not len(arrays[0]):
