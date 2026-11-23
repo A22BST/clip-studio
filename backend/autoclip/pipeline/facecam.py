@@ -23,6 +23,20 @@ class FacecamGeometry:
     face_crop: Rect
 
 
+def manual_facecam_geometry(
+    box: tuple[float, float, float, float], width: int, height: int
+) -> FacecamGeometry:
+    """Convert fixed frame fractions to pixels without detector edge trimming."""
+    x0, y0, x1, y1 = box
+    if width <= 0 or height <= 0 or not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+        raise ValueError("Invalid manual camera bounds or frame dimensions.")
+    left, top, right, bottom = round(x0 * width), round(y0 * height), round(x1 * width), round(y1 * height)
+    if right <= left or bottom <= top:
+        raise ValueError("Manual camera box must cover at least one pixel.")
+    rect = Rect(left, top, right - left, bottom - top)
+    return FacecamGeometry(rect, rect)
+
+
 def trim_webcam_edges(
     webcam: Rect,
     *,

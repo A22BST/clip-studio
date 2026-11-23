@@ -68,6 +68,8 @@ def dylan_campaign(campaign: Campaign | str) -> bool:
 
 
 def require_campaign_camera(stream: StreamSource, campaign: Campaign | str) -> None:
+    if isinstance(campaign, Campaign) and campaign.camera_box is not None:
+        return
     if dylan_campaign(campaign):
         from ..pipeline.facecam import detect_facecam_geometry
 
@@ -537,7 +539,7 @@ def render(
 ) -> list[ClipOutcome]:
     """Render every pick in highlights.json that passes the spoiler filter and the rules."""
     from ..pipeline import layouts, rules
-    from ..pipeline.facecam import detect_facecam_geometry
+    from ..pipeline.facecam import detect_facecam_geometry, manual_facecam_geometry
     from ..pipeline.profanity import bleep_audio_filter, censor_words, profane_intervals
     from ..pipeline.transcript import Transcript
 
@@ -570,15 +572,19 @@ def render(
 
         # -- layout ----------------------------------------------------------
         layout = layouts.Layout(meta.layout)
-        if dylan_campaign(campaign):
+        if dylan_campaign(campaign) or campaign.camera_box is not None:
             layout = layouts.Layout.FACECAM
         if meta.spoiler_level == "reaction-to-spoiler":
             # Rockstar-sensitive moment: the reaction is the clip. Force the REACTION layout.
             layout = layouts.Layout.REACTION
         plan = None
         if layout in (layouts.Layout.FACECAM, layouts.Layout.REACTION):
-            camera = detect_facecam_geometry(source_path, clip.start_s, clip.end_s)
-            if camera is not None and dylan_campaign(campaign):
+            if campaign.camera_box is not None:
+                info = ffmpeg.probe(source_path)
+                camera = manual_facecam_geometry(campaign.camera_box, info.width, info.height)
+            else:
+                camera = detect_facecam_geometry(source_path, clip.start_s, clip.end_s)
+            if camera is not None and dylan_campaign(campaign) and campaign.camera_box is None:
                 # A camera seen in the intro alone is insufficient. Require a usable
                 # camera throughout the cut, checking every five-second interval.
                 for offset in range(0, max(1, math.ceil(duration)), 5):
@@ -604,7 +610,10 @@ def render(
                 if meta.spoiler_level == "reaction-to-spoiler" and not blur:
                     notes.append("reaction-to-spoiler clip has no blur window (check the reveal)")
                 plan = layouts.default_plan(layout, camera.webcam, blur, face_crop=camera.face_crop)
-                if dylan_campaign(campaign):
+                plan.exact_camera_crop = campaign.camera_box is not None
+                if campaign.camera_split is not None:
+                    plan.cam_fraction = campaign.camera_split
+                elif dylan_campaign(campaign):
                     plan.cam_fraction = 0.75
 
         # -- rules -----------------------------------------------------------

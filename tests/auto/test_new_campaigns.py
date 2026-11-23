@@ -90,9 +90,13 @@ def test_new_campaign_values(
         assert "50%" in campaign.notes
         assert campaign.audience_geo == ""  # Account rule stays in notes only.
     if key == "dylan-page-marathon":
+        assert campaign.camera_box == (0.684, 0.148, 0.87, 0.459)
+        assert campaign.camera_split == 0.45
         assert "WHOLE clip" in campaign.notes
         assert "facecam" in campaign.notes
         assert campaign.no_ai_visuals
+    else:
+        assert campaign.camera_box is None and campaign.camera_split is None
     if key in {"dylan-page-marathon", "asianjeff"}:
         assert auto.meta.starts_at.isoformat() == "2026-11-19"
     facts = ClipFacts(

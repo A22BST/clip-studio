@@ -2,6 +2,7 @@ from autoclip.pipeline import captions
 from autoclip.pipeline.rules import ClipFacts, check_clip
 from autoclip.pipeline.transcript import Word
 from autoclip.stream.campaigns import Campaign
+import pytest
 
 
 def _campaign(**kw):
@@ -16,6 +17,21 @@ def _facts(**kw):
 
 def test_defaults_unchanged_for_plain_campaign():
     assert check_clip(_campaign(), _facts()).passed
+
+
+@pytest.mark.parametrize("box", [
+    [-0.1, 0, 1, 1], [0, 0, 1.1, 1], [0.8, 0, 0.2, 1],
+    [0, 0.5, 1, 0.5], [0, 0, 1], [0, 0, float("nan"), 1],
+])
+def test_invalid_manual_camera_bounds(box):
+    with pytest.raises(ValueError):
+        _campaign(camera_box=box)
+
+
+@pytest.mark.parametrize("split", [0, 1, float("inf")])
+def test_invalid_camera_split(split):
+    with pytest.raises(ValueError):
+        _campaign(camera_split=split)
 
 
 def test_disclosure_required_blocks_without_it():

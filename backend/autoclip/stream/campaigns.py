@@ -51,6 +51,17 @@ class Campaign(BaseModel):
     audience_geo: str = ""
     min_engagement_pct: float = Field(default=0, ge=0)
     max_similar_posts: int = Field(default=0, ge=0)
+    #: Fixed webcam bounds as fractions of the source frame, bypassing detection.
+    camera_box: tuple[float, float, float, float] | None = None
+    camera_split: float | None = Field(default=None, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def camera_bounds(self) -> Self:
+        if self.camera_box is not None:
+            x0, y0, x1, y1 = self.camera_box
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                raise ValueError("camera_box requires 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1")
+        return self
 
     @model_validator(mode="before")
     @classmethod

@@ -95,6 +95,15 @@ def test_dylan_slice_camera_guard(tmp_path, monkeypatch, camera):
     assert detect.call_count == 1
 
 
+@pytest.mark.parametrize("name", ["Dylan Page GTA 6 Marathon", "other-campaign"])
+def test_manual_camera_bypasses_slice_guard(tmp_path, monkeypatch, name):
+    monkeypatch.setattr(facecam, "detect_facecam_geometry", lambda *a: pytest.fail("detection attempted"))
+    source = ingest.StreamSource("id", tmp_path, tmp_path / "vod.mp4", None, duration_s=9000)
+    pipeline.require_campaign_camera(
+        source, Campaign(name=name, camera_box=[0.684, 0.148, 0.87, 0.459]),
+    )
+
+
 @pytest.mark.parametrize("missing_at", [None, 0, 2])
 def test_dylan_render_forces_large_camera_and_never_falls_back(tmp_path, monkeypatch, missing_at):
     from autoclip import paths

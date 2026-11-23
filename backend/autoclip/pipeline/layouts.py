@@ -41,6 +41,7 @@ class LayoutPlan:
     cam_fraction: float
     blur_windows: list[BlurWindow] = field(default_factory=list)
     face_crop: Rect | None = None
+    exact_camera_crop: bool = False
 
     @property
     def seam_y_frac(self) -> float:
@@ -58,6 +59,7 @@ class LayoutPlan:
             cam_fraction=float(data["cam_fraction"]),
             blur_windows=[BlurWindow(**window) for window in data.get("blur_windows", [])],
             face_crop=Rect(**data["face_crop"]) if data.get("face_crop") is not None else None,
+            exact_camera_crop=bool(data.get("exact_camera_crop", False)),
         )
 
 
@@ -68,6 +70,7 @@ def default_plan(
     *,
     face_crop: Rect | None = None,
     cam_fraction: float | None = None,
+    exact_camera_crop: bool = False,
 ) -> LayoutPlan:
     return LayoutPlan(
         layout,
@@ -75,6 +78,7 @@ def default_plan(
         cam_fraction if cam_fraction is not None else 0.30,
         list(blur_windows or []),
         face_crop,
+        exact_camera_crop,
     )
 
 
@@ -120,7 +124,9 @@ def build_layout_filtergraph(
     cam_h = max(2, min(out_h - 2, round(out_h * plan.cam_fraction / 2) * 2))
     game_h = out_h - cam_h
     webcam = plan.cam
-    cam = camera_crop(plan.face_crop or webcam, src_w, src_h, out_w, cam_h)
+    cam = plan.face_crop or webcam
+    if not plan.exact_camera_crop:
+        cam = camera_crop(cam, src_w, src_h, out_w, cam_h)
     parts = [
         f"{input_label}setpts=PTS-STARTPTS,split=2[lcsrc][lgsrc]",
         f"[lcsrc]crop={cam.w}:{cam.h}:{cam.x}:{cam.y}:exact=1,"

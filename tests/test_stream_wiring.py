@@ -58,10 +58,10 @@ def wiring(monkeypatch, tmp_path):
         "sfx": [{"name": "impact", "at_s": 18}],
     }
 
-    def run():
+    def run(campaign=None):
         prepared.highlights_path.write_text(json.dumps({"clips": [item]}), encoding="utf-8")
         return pipeline.render(
-            prepared, Campaign(name="test", min_duration_s=20, max_duration_s=35),
+            prepared, campaign or Campaign(name="test", min_duration_s=20, max_duration_s=35),
             stream=SimpleNamespace(folder=tmp_path),
         )
 
@@ -69,6 +69,41 @@ def wiring(monkeypatch, tmp_path):
         item=item, run=run, prepared=prepared, requests=requests,
         report_dir=tmp_path / "exports" / "job",
     )
+
+
+@pytest.mark.parametrize("name", ["Dylan Page GTA 6 Marathon", "other-campaign"])
+def test_manual_camera_reaches_export_without_detection(wiring, monkeypatch, name):
+    from autoclip.pipeline import facecam, layouts
+
+    monkeypatch.setattr(facecam, "detect_facecam_geometry", lambda *a: pytest.fail("detection attempted"))
+    monkeypatch.setattr(pipeline.ffmpeg, "probe", lambda _: SimpleNamespace(
+        width=1920, height=1080, has_audio=True, duration_s=0.5,
+    ))
+    campaign = Campaign(
+        name=name, min_duration_s=20, max_duration_s=35,
+        camera_box=[0.684, 0.148, 0.87, 0.459], camera_split=0.45,
+    )
+    outcome, = wiring.run(campaign)
+    assert outcome.status == "exported" and outcome.layout_used == "facecam"
+    plan = wiring.requests[0].layout_plan
+    assert plan.cam == plan.face_crop == layouts.Rect(1313, 160, 357, 336)
+    assert plan.cam_fraction == 0.45 and plan.exact_camera_crop
+    graph = layouts.build_layout_filtergraph(plan, src_w=1920, src_h=1080, out_w=1080, out_h=1920)
+    assert "[lcsrc]crop=357:336:1313:160:exact=1" in graph
+    assert "[lgsrc]drawbox=x=1313:y=160:w=357:h=336:color=black:t=fill,scale=" in graph
+    assert "scale=1080:864" in graph
+
+
+def test_no_manual_camera_keeps_detector_fallback(wiring, monkeypatch):
+    from autoclip.pipeline import facecam
+
+    wiring.item["layout"] = "facecam"
+    detect = Mock(return_value=None)
+    monkeypatch.setattr(facecam, "detect_facecam_geometry", detect)
+    outcome, = wiring.run()
+    assert outcome.status == "exported" and outcome.layout_used == "track"
+    assert wiring.requests[0].layout_plan is None
+    detect.assert_called_once()
 
 
 def test_story_and_sfx_reach_export_and_reports(wiring):

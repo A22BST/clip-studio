@@ -58,6 +58,17 @@ def test_plan_json_roundtrip() -> None:
         assert len(plan.blur_windows) == 1
 
 
+@pytest.mark.parametrize("width,height,expected", [
+    (1920, 1080, Rect(1313, 160, 357, 336)),
+    (1280, 720, Rect(876, 107, 238, 223)),
+])
+def test_manual_camera_geometry(width, height, expected):
+    geometry = facecam.manual_facecam_geometry((0.684, 0.148, 0.87, 0.459), width, height)
+    assert geometry.webcam == geometry.face_crop == expected
+    plan = default_plan(Layout.FACECAM, geometry.webcam, exact_camera_crop=True, cam_fraction=0.45)
+    assert LayoutPlan.from_dict(json.loads(json.dumps(plan.to_dict()))) == plan
+
+
 @pytest.mark.parametrize(
     "start,end", [(-1, 2), (2, 1), (1, 1), (0, float("inf")), (float("nan"), 2)]
 )
