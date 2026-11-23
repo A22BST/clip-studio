@@ -196,6 +196,15 @@ def _run_chain(job_id: str, config: AutoConfig, work: Path, out: Path) -> Path:
         "\nSFX availability for this run (overrides the skill's SFX folder instructions):\n"
         "sfx is optional. Use at most ONE sfx event per clip, only at a real payoff; "
         "otherwise use sfx: []. at_s is seconds from the refined clip start.\n"
+        "IMPACT (BONE CRACK, Boom, Bang) -> crashes, hits, deaths, explosions, jump scares.\n"
+        "FAIL (FAH, ROBLOX, SPONGEBOB, AMONG US) -> clear blunders or absurd funny payoffs; MEME BOOM only for obviously comedic fails.\n"
+        "REVEAL (MAGIC REVEAL, GLITTER, Intro sound (correct)) -> finding or unveiling something.\n"
+        "MONEY (CHA CHING) -> money, rewards, big wins.\n"
+        "NOTIFICATION (DING, DISCORD NOTIFICATION, CLICK, KEYBOARD TYPING) -> chat, comments, messages, tech.\n"
+        "SPOTLIGHT (Pop, Camera flash, PEW, CORE) -> a small clear beat, caught, quick punchline.\n"
+        "BUILD-UP (RISER, Riser (1), Riser 2) -> kind riser only, END at the payoff; never an impact.\n"
+        "RIZZ / PIANO MEME -> explicit flirt, awkward, cringe or theatrical drama; never meme sounds on serious or sad moments.\n"
+        "Anchor at story.payoff.start_s minus clip start; avoid speech in the preceding 0.4s unless onset rises >=10dB; seek a gap within +1s or omit. Keep effect starts after 3s and before the last 1.5s, rotate names; no effect is fine.\n"
     )
     if names:
         sfx_note += (

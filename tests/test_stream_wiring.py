@@ -13,7 +13,9 @@ from autoclip.stream.campaigns import Campaign
 
 @pytest.fixture
 def wiring(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTOCLIP_HOME", str(tmp_path))
     transcript = Transcript(words=[Word(f"word{i}.", i, i + 0.9) for i in range(30)])
+    transcript.words[15].start = 15.5
     monkeypatch.setattr(Transcript, "load", lambda _path: transcript)
     workspace = SimpleNamespace(
         transcript=tmp_path / "transcript.json", audio=tmp_path / "audio.wav",
@@ -35,7 +37,7 @@ def wiring(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.cutqa, "check_dark_opening", lambda *a: None)
     monkeypatch.setattr(sfx, "library_dir", lambda: tmp_path / "sfx")
     (tmp_path / "sfx").mkdir()
-    (tmp_path / "sfx" / "impact.wav").write_bytes(b"mock audio")
+    (tmp_path / "sfx" / "Pop.wav").write_bytes(b"mock audio")
     monkeypatch.setattr(sfx.ffmpeg, "probe", lambda _path: SimpleNamespace(
         has_audio=True, duration_s=0.5,
     ))
@@ -53,9 +55,9 @@ def wiring(monkeypatch, tmp_path):
         "story": {
             "setup": {"start_s": 0, "end_s": 3, "text": "The plan"},
             "change": {"start_s": 5, "end_s": 8, "text": "The surprise"},
-            "payoff": {"start_s": 15, "end_s": 18, "text": "The reaction"},
+            "payoff": {"start_s": 15, "end_s": 18, "text": "Caught at the punchline"},
         },
-        "sfx": [{"name": "impact", "at_s": 18}],
+        "sfx": [{"name": "Pop", "at_s": 15.4}],
     }
 
     def run(campaign=None):
@@ -117,21 +119,21 @@ def test_story_and_sfx_reach_export_and_reports(wiring):
     assert len(case.requests) == 1
     assert case.requests[0].sfx == meta.sfx == case.item["sfx"]
     assert case.requests[0].start_s == 0
-    assert outcome.status == "exported" and outcome.sfx == "impact"
+    assert outcome.status == "exported" and outcome.sfx == "Pop"
     assert outcome.story == meta.story
     report = json.loads((case.report_dir / "report.json").read_text(encoding="utf-8"))[0]
     markdown = (case.report_dir / "report.md").read_text(encoding="utf-8")
-    assert report["sfx"] == "impact" and "sfx: impact" in report["notes"]
-    assert "- sfx: impact" in markdown
+    assert report["sfx"] == "Pop" and "sfx: Pop" in report["notes"]
+    assert "- sfx: Pop" in markdown
     for name, beat in case.item["story"].items():
         assert f"- {name}: {beat['start_s']}s-{beat['end_s']}s: {beat['text']}" in markdown
 
 
 @pytest.mark.parametrize("events", [
-    [{"name": "unknown", "at_s": 18}],
-    [{"name": "impact", "at_s": 100}],
-    [{"name": "impact", "at_s": -1}],
-    [{"name": "impact", "at_s": 5}, {"name": "impact", "at_s": 18}],
+    [{"name": "unknown", "at_s": 15.4}],
+    [{"name": "Pop", "at_s": 100}],
+    [{"name": "Pop", "at_s": -1}],
+    [{"name": "Pop", "at_s": 5}, {"name": "Pop", "at_s": 15.4}],
 ])
 def test_invalid_sfx_renders_without_effect_with_warning(wiring, events):
     wiring.item["sfx"] = events
@@ -176,18 +178,22 @@ def test_auto_sfx_reaches_export_and_report(wiring, monkeypatch):
     from autoclip.pipeline import sfx_auto
 
     wiring.item["sfx"] = []
-    event = {"name": "impact", "at_s": 12, "gain_db": sfx.DEFAULT_GAIN_DB, "kind": "impact"}
+    event = {"name": "Pop", "at_s": 12, "gain_db": sfx.DEFAULT_GAIN_DB, "kind": "impact"}
     suggest = Mock(return_value=[event])
     monkeypatch.setattr(sfx_auto, "suggest_events", suggest)
     outcome, = wiring.run()
     request, = wiring.requests
-    assert request.sfx == [event] and outcome.sfx == "impact"
+    assert request.sfx == [event] and outcome.sfx == "Pop"
     assert suggest.call_args.args == (
         wiring.prepared.runner.workspace.audio, request.start_s, request.end_s,
     )
     assert suggest.call_args.kwargs["seed"]
+    assert suggest.call_args.kwargs["story"]["payoff"]["start_s"] == 15
+    assert suggest.call_args.kwargs["hook"] == wiring.item["hook"]
+    assert suggest.call_args.kwargs["title"] == wiring.item["title"]
+    assert len(suggest.call_args.kwargs["transcript"].words) == 30
     report = json.loads((wiring.report_dir / "report.json").read_text(encoding="utf-8"))[0]
-    assert report["sfx"] == "impact"
+    assert report["sfx"] == "Pop"
 
 
 @pytest.mark.parametrize("manual,enabled", [(True, True), (False, False)])
@@ -210,3 +216,21 @@ def test_auto_sfx_failure_is_nonfatal(wiring, monkeypatch):
     outcome, = wiring.run()
     assert outcome.status == "exported" and wiring.requests[0].sfx == []
     assert any("auto sfx warning: decode failed" in note for note in outcome.notes)
+
+
+def test_model_sfx_over_speech_is_dropped_without_auto_replacement(wiring, monkeypatch):
+    from autoclip.pipeline import sfx_auto
+
+    wiring.item["sfx"] = [{"name": "Pop", "at_s": 15}]
+    monkeypatch.setattr(sfx_auto, "loudness_onsets", lambda *a: [(15, 8)])
+    monkeypatch.setattr(sfx_auto, "suggest_events", lambda *a, **kw: pytest.fail("replaced rejected pick"))
+    outcome, = wiring.run()
+    assert wiring.requests[0].sfx == []
+    assert any("over speech" in note for note in outcome.notes)
+
+
+def test_model_category_mismatch_is_reported(wiring):
+    wiring.item["sfx"] = [{"name": "ROBLOX", "at_s": 15.4}]
+    outcome, = wiring.run()
+    assert wiring.requests[0].sfx == []
+    assert any("category mismatch" in note for note in outcome.notes)

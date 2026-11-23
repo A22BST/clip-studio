@@ -691,12 +691,21 @@ def render(
 
         destination = out_dir / export.output_filename(clip.title or f"clip-{clip.rank}", ratio)
         effect_name = ""
-        if not meta.sfx and settings.auto_sfx:
+        if meta.sfx:
+            from ..pipeline.sfx_auto import validate_events
+
+            meta.sfx, sfx_notes = validate_events(
+                meta.sfx, runner.workspace.audio, clip.start_s, clip.end_s,
+                story=meta.story, hook=clip.hook, title=clip.title, transcript=transcript,
+            )
+            notes.extend(sfx_notes)
+        elif settings.auto_sfx:
             try:
                 from ..pipeline.sfx_auto import suggest_events
 
                 meta.sfx = suggest_events(
                     runner.workspace.audio, clip.start_s, clip.end_s, seed=clip.id,
+                    story=meta.story, hook=clip.hook, title=clip.title, transcript=transcript,
                 )
             except Exception as exc:
                 warning = f"auto sfx warning: {exc}; rendering without sfx"

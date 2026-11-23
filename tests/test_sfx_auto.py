@@ -1,6 +1,5 @@
 """DSP peak selection and lossless video passthrough for post-render SFX."""
 
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -35,36 +34,32 @@ def audio(path, *, burst=True, duration=12, onset=6):
     return path
 
 
-def test_peak_and_seed(library, tmp_path):
+def test_story_anchor_and_rotation(library, tmp_path):
     path = audio(tmp_path / "signal.wav")
-    event, = sfx_auto.suggest_events(path, 0, 12, "a")
-    assert event["at_s"] == pytest.approx(6, abs=.05)
-    assert sfx.DEFAULT_GAIN_DB == 0
-    assert event["kind"] == "impact" and event["gain_db"] == sfx.DEFAULT_GAIN_DB
-    for seed in ("a", "b", "c", "stable"):
-        events = sfx_auto.suggest_events(path, 0, 12, seed)
-        assert events == sfx_auto.suggest_events(path, 0, 12, seed)
-        index = int.from_bytes(hashlib.sha256(seed.encode()).digest(), "big") % len(sfx_auto.PREFERENCES)
-        ordered = sfx_auto.PREFERENCES[index:] + sfx_auto.PREFERENCES[:index]
-        expected = next(name for name in ordered if name in sfx.available_names())
-        assert events[0]["name"] == expected
+    story = {"payoff": {"start_s": 6, "text": "mauled by a shark"}}
+    first, = sfx_auto.suggest_events(path, 0, 12, "a", story=story, transcript=[])
+    second, = sfx_auto.suggest_events(path, 0, 12, "a", story=story, transcript=[])
+    assert first["at_s"] == pytest.approx(6, abs=.05)
+    assert first["name"] != second["name"]
+    assert first["kind"] == "impact" and first["gain_db"] == sfx.DEFAULT_GAIN_DB
 
 
-def test_no_peak_and_no_library(library, tmp_path):
-    assert sfx_auto.suggest_events(audio(tmp_path / "flat.wav", burst=False), 0, 12, "a") == []
-    (library / "Boom.wav").rename(library / "other.wav")
-    (library / "BONE CRACK.wav").rename(library / "another.wav")
-    assert sfx_auto.suggest_events(audio(tmp_path / "peak.wav"), 0, 12, "a") == []
+def test_no_context_means_no_effect(library, tmp_path):
+    assert sfx_auto.suggest_events(audio(tmp_path / "peak.wav"), 0, 12, "a", transcript=[]) == []
 
 
 @pytest.mark.parametrize("onset", [1, 2.9, 10.6, 11])
-def test_excluded_onsets(library, tmp_path, onset):
-    assert sfx_auto.suggest_events(audio(tmp_path / "signal.wav", onset=onset), 0, 12, "a") == []
+def test_excluded_anchors(library, tmp_path, onset):
+    story = {"payoff": {"start_s": onset, "text": "crash"}}
+    assert sfx_auto.suggest_events(audio(tmp_path / "flat.wav", burst=False), 0, 12, "a",
+                                   story=story, transcript=[]) == []
 
 
 def test_window_offset(library, tmp_path):
     path = audio(tmp_path / "source.wav", duration=20, onset=11)
-    assert sfx_auto.suggest_events(path, 5, 17, "a")[0]["at_s"] == pytest.approx(6, abs=.05)
+    story = {"payoff": {"start_s": 11, "text": "crash"}}
+    assert sfx_auto.suggest_events(path, 5, 17, "a", story=story,
+                                   transcript=[])[0]["at_s"] == pytest.approx(6, abs=.05)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")
@@ -83,7 +78,7 @@ def test_add_sfx_end_to_end(library, tmp_path):
     original = source.read_bytes()
     stat = source.stat()
     script = Path(__file__).resolve().parents[1] / "scripts" / "add_sfx.py"
-    result = subprocess.run([sys.executable, str(script), str(source)], capture_output=True,
+    result = subprocess.run([sys.executable, str(script), str(source), "--name", "Boom", "--at", "3.5"], capture_output=True,
                             text=True, check=True)
     assert "at_s=3.5" in result.stdout and "none" not in result.stdout
     output = source.with_name(source.stem + "_sfx.mp4")

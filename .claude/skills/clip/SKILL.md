@@ -132,18 +132,16 @@ candidate's `first_word..last_word`, every `spoiler_level`/`layout` one of the a
 hashtags, mentions, `required_caption_phrases` (the caption MUST contain them), `max_title_chars`,
 `banned_words`.
 
-`sfx` is ON (Ahmad, 21 Nov): add ONE sound effect when the clip has a real payoff (crash, jump-scare,
-reveal, crash-out, fail) and leave `sfx: []` when nothing fits; never over speech that carries the joke. All 25
-sounds in the pack are cleared for Shorts, Reels and TikTok. Max 1 per clip (the renderer rejects more). An event is `{"name": "Boom", "at_s": 8.5, "gain_db": -6, "kind": "impact"}`.
-`at_s` is seconds from the final refined clip start, within the clip duration.
-Use `kind: "riser"` to align the sound's END to `at_s`; a riser beginning before
-the clip is trimmed at the front. `gain_db` defaults to -6 and is
-applied with a further -12 dB reduction to keep effects under the stream.
-Allowed names are the local audio filenames (case-insensitive, extension optional)
-under `<AUTOCLIP_HOME>/assets/sfx/`, currently
-`D:\autoclip\assets\sfx\viral-clip-sound-effects\` (for example Boom, Pop,
-BONE CRACK, Riser 2, MEME BOOM, CHA CHING). Inspect that folder for the full list;
-do not invent asset names. Stream pipeline wiring must pass this field to the exporter.
+`sfx`: at most ONE cleared local effect per clip; no effect is fine (`sfx: []`). Example: `{"name":"Boom","at_s":8.5,"gain_db":0,"kind":"impact"}`; names come from `<AUTOCLIP_HOME>/assets/sfx/` (currently `D:\autoclip\assets\sfx\viral-clip-sound-effects\`).
+IMPACT (BONE CRACK, Boom, Bang) -> crashes, hits, deaths, explosions, shocking jump scares.
+FAIL (FAH, ROBLOX, SPONGEBOB, AMONG US) -> clear blunders or absurd funny payoffs; MEME BOOM only for obviously comedic fails.
+REVEAL (MAGIC REVEAL, GLITTER, Intro sound (correct)) -> finding, unveiling or discovering something.
+MONEY (CHA CHING) -> money, rewards or big wins.
+NOTIFICATION (DING, DISCORD NOTIFICATION, CLICK, KEYBOARD TYPING) -> chat, comments, messages or tech.
+SPOTLIGHT (Pop, Camera flash, PEW, CORE) -> small clear beats, caught or quick punchlines.
+BUILD-UP (RISER, Riser (1), Riser 2) -> `kind: "riser"` only; sound ENDS at payoff, never use as an impact.
+RIZZ / PIANO MEME -> explicit flirt, awkward, cringe or theatrical drama; never meme sounds on serious or sad moments.
+Anchor `at_s` at story payoff start minus final clip start, snap within +/-1.5s; no speech in the preceding 0.4s unless onset is >=10dB above baseline, else seek a gap within +1s or omit. Start after 3s and before the last 1.5s; rotate names, never repeat consecutively.
 
 ## 6. Render and report
 Run `clip stream <same vod/args as before> --campaign <name>` again (the job is reused; transcribe is cached), or
